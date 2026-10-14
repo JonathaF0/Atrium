@@ -91,6 +91,9 @@ const mockPrisma = {
   file: {
     aggregate: mock(() => Promise.resolve({ _sum: { sizeBytes: 5242880 } })),
   },
+  invitation: {
+    count: mock((_args?: unknown) => Promise.resolve(0)),
+  },
   member: {
     count: mock(() => Promise.resolve(1)),
   },
@@ -163,15 +166,55 @@ describe("BillingService", () => {
     expect(sub?.plan).toBeDefined();
   });
 
+  it("getUsage counts every staff role as a team member, not just admins", async () => {
+    await service.getUsage("org-1");
+    const calls = mockPrisma.member.count.mock.calls as unknown as [{ where: Record<string, unknown> }][];
+    expect(calls.map((c) => c[0].where)).toEqual([
+      { organizationId: "org-1", role: { not: "member" } },
+      { organizationId: "org-1", role: "member" },
+    ]);
+    const invites = mockPrisma.invitation.count.mock.calls as unknown as [{ where: Record<string, unknown> }][];
+    expect(invites.map((c) => c[0].where.role)).toEqual([{ not: "member" }, "member"]);
+  });
+
+  it("getUsage does not charge a seat for the workspace creator", async () => {
+    // Only the owner who created the workspace: no team members used.
+    mockPrisma.member.count.mockImplementation(({ where }: { where: { role: unknown } }) =>
+      Promise.resolve(where.role === "member" ? 0 : 1),
+    );
+    expect((await service.getUsage("org-1")).members).toBe(0);
+    // The creator plus one invited owner and one admin: two seats used.
+    mockPrisma.member.count.mockImplementation(({ where }: { where: { role: unknown } }) =>
+      Promise.resolve(where.role === "member" ? 0 : 3),
+    );
+    expect((await service.getUsage("org-1")).members).toBe(2);
+    mockPrisma.member.count.mockImplementation(() => Promise.resolve(1));
+  });
+
   it("getUsage returns counts for all resources", async () => {
     const usage = await service.getUsage("org-1");
     expect(usage.projects).toBe(1);
     expect(usage.storageMb).toBe(5); // 5242880 / 1048576 rounded
-    expect(usage.members).toBe(1);
+    expect(usage.members).toBe(0); // the creator's own owner row is free
     expect(usage.clients).toBe(1);
   });
 
+  it("getUsage counts pending invitations as taken seats", async () => {
+    // One pending client invite and one pending admin invite.
+    mockPrisma.invitation.count.mockImplementation(({ where }: { where: { role: unknown } }) =>
+      Promise.resolve(where.role === "member" ? 1 : 1),
+    );
+    const usage = await service.getUsage("org-1");
+    expect(usage.clients).toBe(2);
+    expect(usage.members).toBe(1);
+    const call = mockPrisma.invitation.count.mock.calls[0] as unknown as [{ where: Record<string, unknown> }];
+    expect(call[0].where).toMatchObject({ organizationId: "org-1", status: "pending" });
+    expect(call[0].where.expiresAt).toBeDefined();
+    mockPrisma.invitation.count.mockImplementation(() => Promise.resolve(0));
+  });
+
   it("initializeFreePlan creates subscription record", async () => {
+    mockPrisma.subscription.findUnique.mockResolvedValueOnce(null);
     await service.initializeFreePlan("org-1");
     expect(mockPrisma.subscription.create).toHaveBeenCalled();
     expect(mockStripeService.stripe.customers.create).toHaveBeenCalled();
@@ -232,5 +275,22 @@ describe("BillingService", () => {
     mockPrisma.subscription.count.mockImplementation(() => Promise.resolve(10));
     const remaining = await service.getLifetimeSeatsRemaining();
     expect(remaining).toBe(90);
+  });
+
+  it("initializeFreePlan does nothing when another request already created the row", async () => {
+    mockPrisma.subscription.create.mockClear();
+    mockStripeService.stripe.customers.create.mockClear();
+    await service.initializeFreePlan("org-1");
+    expect(mockPrisma.subscription.create).not.toHaveBeenCalled();
+    // Checked before talking to Stripe, so the loser does not leave an orphaned customer behind.
+    expect(mockStripeService.stripe.customers.create).not.toHaveBeenCalled();
+  });
+
+  it("initializeFreePlan tolerates losing the create race to a concurrent request", async () => {
+    mockPrisma.subscription.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.subscription.create.mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint failed on the fields: (`organizationId`)"), { code: "P2002" }),
+    );
+    await expect(service.initializeFreePlan("org-1")).resolves.toBeUndefined();
   });
 });

@@ -3,6 +3,8 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { SignOutButton } from "./sign-out-button";
 import { SidebarNav } from "./sidebar-nav";
 import { EmailVerificationBanner } from "./email-verification-banner";
+import { TrialBanner } from "./trial-banner";
+import { TimezoneSync } from "./timezone-sync";
 import { TelemetryConsentBanner } from "@/components/telemetry-consent-banner";
 import { MobileNav } from "./mobile-nav";
 import { OrgSwitcher, type SwitchableOrg } from "@/components/org-switcher";
@@ -47,6 +49,22 @@ async function getBranding() {
     return res.json();
   } catch {
     return null;
+  }
+}
+
+/** Whether the workspace still needs its timezone filled in. Owners only; false on any failure. */
+async function needsTimezone(): Promise<boolean> {
+  try {
+    const cookieStore = await cookies();
+    const res = await fetch(`${API_URL}/api/settings`, {
+      headers: { Cookie: cookieStore.toString() },
+      cache: "no-store",
+    });
+    if (!res.ok) return false;
+    const settings: { timezone?: string | null } = await res.json();
+    return !settings.timezone;
+  } catch {
+    return false;
   }
 }
 
@@ -151,16 +169,19 @@ export default async function DashboardLayout({
 
   // Redirect owners to setup wizard if setup is not completed
   let telemetryEnabled: boolean | null = null;
+  let timezoneMissing: boolean = false;
   const isHostedDeployment = process.env.NEXT_PUBLIC_SENTRY_ENABLED === "true";
   if (session.role === "owner") {
-    const [setupStatus, telemetry] = await Promise.all([
+    const [setupStatus, telemetry, needsZone] = await Promise.all([
       getSetupStatus(),
       isHostedDeployment ? Promise.resolve(true) : getTelemetryStatus(),
+      needsTimezone(),
     ]);
     if (setupStatus && !setupStatus.completed) {
       redirect("/setup");
     }
     telemetryEnabled = telemetry;
+    timezoneMissing = needsZone;
   }
 
   const logoSrc = getLogoSrc(branding);
@@ -216,6 +237,8 @@ export default async function DashboardLayout({
           {!session.user?.emailVerified && (
             <EmailVerificationBanner email={session.user?.email} />
           )}
+          {session.role === "owner" && <TrialBanner />}
+          {timezoneMissing && <TimezoneSync />}
           {session.role === "owner" && telemetryEnabled === null && (
             <TelemetryConsentBanner />
           )}

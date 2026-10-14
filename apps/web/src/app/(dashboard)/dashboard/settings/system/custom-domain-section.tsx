@@ -5,6 +5,8 @@ import { Check, Copy, RefreshCw, Sparkles, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/components/toast";
 import { copyToClipboard } from "@/lib/clipboard";
+import { useIsTrialing } from "@/lib/plan-features";
+import { TrialTag } from "@/components/pro-badge";
 
 interface Subscription {
   subscription: { plan: { slug: string } } | null;
@@ -167,6 +169,7 @@ function DnsTable({ domain, target }: { domain: string; target: string }) {
 
 export function CustomDomainSection() {
   const [isPaid, setIsPaid] = useState(false);
+  const isTrialing: boolean = useIsTrialing();
   const [loadingPlan, setLoadingPlan] = useState(true);
   const [domain, setDomain] = useState("");
   const [savedDomain, setSavedDomain] = useState<string | null>(null);
@@ -261,7 +264,7 @@ export function CustomDomainSection() {
           </span>
         </div>
         <a
-          href="/dashboard/settings/account?reason=custom-domain#billing"
+          href="/dashboard/settings/billing?reason=custom-domain"
           className="shrink-0 flex items-center gap-1.5 px-4 py-2 bg-[var(--primary)] text-white rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity whitespace-nowrap"
         >
           Upgrade to Pro
@@ -276,6 +279,7 @@ export function CustomDomainSection() {
 
   return (
     <div className="space-y-4">
+      {isTrialing && <TrialTag />}
       <div className="space-y-1.5">
         <div className="flex gap-2">
           <input
