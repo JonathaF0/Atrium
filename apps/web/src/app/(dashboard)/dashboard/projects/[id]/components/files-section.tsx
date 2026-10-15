@@ -30,11 +30,15 @@ import {
   LinkIcon,
   Plus,
   Pencil,
+  CheckCircle,
 } from "lucide-react";
 import { track } from "@/lib/track";
 import { downloadFile } from "@/lib/download";
 import { usePlanFeatures, useIsTrialing } from "@/lib/plan-features";
 import { ProBadge, UpgradeLink, TrialTag } from "@/components/pro-badge";
+import { deliverableStatus, sendDeliverable } from "@/lib/deliverable";
+import { AskApprovalCheckbox, DeliverableFields } from "./deliverable-fields";
+import { DeliverableVersionModal } from "./deliverable-version-modal";
 import dynamic from "next/dynamic";
 
 const SignatureFieldPlacer = dynamic(
@@ -66,6 +70,7 @@ interface DocumentResponse {
   signedAt?: string;
   signatureMethod?: string;
   fieldId?: string;
+  reason?: string | null;
   user: { id: string; name: string };
 }
 
@@ -74,6 +79,8 @@ interface DocumentFile {
   filename: string;
   mimeType: string;
   sizeBytes: number;
+  type?: "UPLOAD" | "LINK";
+  url?: string | null;
 }
 
 interface DocumentVersion {
@@ -102,6 +109,7 @@ interface DocumentRecord {
   expiresAt?: string;
   voidReason?: string;
   options?: string;
+  requestNote?: string | null;
 }
 
 interface AuditEvent {
@@ -123,6 +131,7 @@ const typeLabels: Record<string, string> = {
   proposal: "Proposal",
   nda: "NDA",
   other: "Other",
+  deliverable: "For approval",
 };
 
 import { documentStatusColors as statusColors } from "@/lib/status-colors";
@@ -154,6 +163,7 @@ export function FilesSection({
   const [docsTotalPages, setDocsTotalPages] = useState(1);
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
   const [showDocUpload, setShowDocUpload] = useState(false);
+  const [versionDoc, setVersionDoc] = useState<DocumentRecord | null>(null);
   const [docUploading, setDocUploading] = useState(false);
   const [voidModalDocId, setVoidModalDocId] = useState<string | null>(null);
   const [voidReason, setVoidReason] = useState("");
@@ -182,6 +192,16 @@ export function FilesSection({
   const [linkDescription, setLinkDescription] = useState("");
   const [linkSaving, setLinkSaving] = useState(false);
 
+  // "Ask client to approve" state, shared by the upload and link modals
+  const [askApproval, setAskApproval] = useState(false);
+  const [approvalNote, setApprovalNote] = useState("");
+  const [approvalReminders, setApprovalReminders] = useState(true);
+  const resetApproval = (): void => {
+    setAskApproval(false);
+    setApprovalNote("");
+    setApprovalReminders(true);
+  };
+
   // Edit file modal state
   const [editFile, setEditFile] = useState<FileRecord | null>(null);
   const [editFilename, setEditFilename] = useState("");
@@ -207,7 +227,7 @@ export function FilesSection({
 
   // Doc upload form
   const [docTitle, setDocTitle] = useState("");
-  const [docType, setDocType] = useState("contract");
+  const [docType, setDocType] = useState("other");
   const [docFile, setDocFile] = useState<File | null>(null);
   const [requiresSignature, setRequiresSignature] = useState(false);
   const [requiresApproval, setRequiresApproval] = useState(false);
@@ -246,9 +266,14 @@ export function FilesSection({
     }
   };
 
+  const openRequestApproval = (): void => {
+    setAskApproval(true);
+    setShowDocUpload(true);
+  };
+
   const resetDocForm = () => {
     setDocTitle("");
-    setDocType("contract");
+    setDocType("other");
     setDocFile(null);
     setRequiresSignature(false);
     setRequiresApproval(false);
@@ -258,6 +283,7 @@ export function FilesSection({
     setExpiresInDays("");
     setReminderEnabled(false);
     setReminderIntervalDays(3);
+    resetApproval();
   };
 
   const handleFileDownload = async (fileId: string, filename: string) => {
@@ -302,6 +328,7 @@ export function FilesSection({
     setLinkUrl("");
     setLinkTitle("");
     setLinkDescription("");
+    resetApproval();
   };
 
   const openEditFile = (file: FileRecord): void => {
@@ -364,6 +391,14 @@ export function FilesSection({
     if (!url || !title) return;
     setLinkSaving(true);
     try {
+      if (askApproval) {
+        await sendDeliverable({ projectId, title, url, note: approvalNote, reminderEnabled: approvalReminders });
+        setShowAddLink(false);
+        resetLinkForm();
+        loadDocuments();
+        success("Sent to the client for approval");
+        return;
+      }
       await apiFetch("/files/link", {
         method: "POST",
         body: JSON.stringify({
@@ -378,7 +413,8 @@ export function FilesSection({
       onFileChange();
       success("Link added");
     } catch (err) {
-      showError(err instanceof Error ? err.message : "Failed to add link");
+      console.error(err);
+      showError(err instanceof Error ? err.message : askApproval ? "Failed to send for approval" : "Failed to add link");
     } finally {
       setLinkSaving(false);
     }
@@ -389,6 +425,14 @@ export function FilesSection({
     if (!docFile || !docTitle.trim()) return;
     setDocUploading(true);
     try {
+      if (askApproval) {
+        await sendDeliverable({ projectId, title: docTitle, note: approvalNote, reminderEnabled: approvalReminders, file: docFile });
+        setShowDocUpload(false);
+        resetDocForm();
+        loadDocuments();
+        success("Sent to the client for approval");
+        return;
+      }
       const formData = new FormData();
       formData.append("file", docFile);
       formData.append("projectId", projectId);
@@ -424,7 +468,8 @@ export function FilesSection({
       success(andSend ? "Document uploaded and sent" : "Document saved as draft");
       if (requiresSignature && isPdf) setPlacerDocId(doc.id);
     } catch (err) {
-      showError(err instanceof Error ? err.message : "Failed to upload document");
+      console.error(err);
+      showError(err instanceof Error ? err.message : askApproval ? "Failed to send for approval" : "Failed to upload document");
     } finally {
       setDocUploading(false);
     }
@@ -554,13 +599,23 @@ export function FilesSection({
             {showAddMenu && (
               <div className="absolute right-0 mt-1 w-64 bg-[var(--background)] border border-[var(--border)] rounded-lg shadow-lg z-10 py-1">
                 <button
+                  onClick={() => { setShowAddMenu(false); openRequestApproval(); }}
+                  className="w-full flex items-start gap-3 px-3 py-2.5 hover:bg-[var(--muted)] text-left"
+                >
+                  <CheckCircle size={14} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
+                  <div>
+                    <p className="text-sm font-medium">Request approval</p>
+                    <p className="text-xs text-[var(--muted-foreground)]">Send a design, draft or link for sign-off</p>
+                  </div>
+                </button>
+                <button
                   onClick={() => { setShowAddMenu(false); setShowDocUpload(true); }}
                   className="w-full flex items-start gap-3 px-3 py-2.5 hover:bg-[var(--muted)] text-left"
                 >
                   <Upload size={14} className="mt-0.5 shrink-0 text-[var(--muted-foreground)]" />
                   <div>
                     <p className="text-sm font-medium">Upload file</p>
-                    <p className="text-xs text-[var(--muted-foreground)]">Upload a document from your device</p>
+                    <p className="text-xs text-[var(--muted-foreground)]">Share a file with the client</p>
                   </div>
                 </button>
                 <button
@@ -583,10 +638,12 @@ export function FilesSection({
       {documents.length > 0 && (
         <div className="space-y-2 mb-4">
           {documents.map((doc) => {
-            const colors = statusColors[doc.status] || statusColors.pending;
+            const isDeliverable = doc.type === "deliverable";
+            const deliverable = deliverableStatus(doc.status);
+            const colors = isDeliverable ? deliverable : statusColors[doc.status] || statusColors.pending;
             const isExpanded = expandedDocId === doc.id;
             const isDraft = doc.status === "draft";
-            const isVoidable = doc.status === "draft" || doc.status === "pending";
+            const isVoidable = doc.status === "draft" || doc.status === "pending" || (doc.type === "deliverable" && doc.status === "declined");
             const needsSigning = doc.requiresSignature && doc.signatureFields && doc.signatureFields.length > 0;
             const signedFieldIds = doc.responses.filter((r) => r.action === "signed" && r.fieldId).map((r) => r.fieldId);
             const hasUnsignedFields = needsSigning && !doc.signatureFields!.every((f) => signedFieldIds.includes(f.id));
@@ -597,9 +654,9 @@ export function FilesSection({
                   onClick={() => setExpandedDocId(isExpanded ? null : doc.id)}
                   className="flex items-center justify-between w-full p-3 text-left hover:bg-[var(--muted)] transition-colors rounded-lg"
                 >
-                  <div className="flex items-center gap-3">
-                    {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <div>
+                  <div className="flex items-center gap-3 min-w-0">
+                    {isExpanded ? <ChevronDown size={14} className="shrink-0" /> : <ChevronRight size={14} className="shrink-0" />}
+                    <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="text-sm font-medium">{doc.title}</p>
                         {(doc.currentVersion ?? 1) > 1 && (
@@ -612,14 +669,33 @@ export function FilesSection({
                         {doc.file.filename} &middot; {formatBytes(doc.file.sizeBytes)}
                         {doc.expiresAt && <span> &middot; Expires {new Date(doc.expiresAt).toLocaleDateString()}</span>}
                       </p>
+                      {doc.type === "deliverable" && doc.status === "declined" && doc.responses[0]?.reason && (
+                        <p className="text-xs text-red-700 mt-1" data-testid={`change-note-${doc.id}`}>
+                          {doc.responses[0].user.name}: “{doc.responses[0].reason}”
+                        </p>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: "#f3f4f6", color: "#374151" }}>
-                      {typeLabels[doc.type] || doc.type}
-                    </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ backgroundColor: colors.bg, color: colors.text }}>
-                      {doc.status}
+                  <div className="flex items-center gap-2 shrink-0 ml-2">
+                    {!isDeliverable && (
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0" style={{ backgroundColor: "#f3f4f6", color: "#374151" }}>
+                        {typeLabels[doc.type] || doc.type}
+                      </span>
+                    )}
+                    {isDeliverable && doc.status === "declined" && !isArchived && !isExpanded && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        data-testid={`send-next-version-${doc.id}`}
+                        onClick={(e) => { e.stopPropagation(); setVersionDoc(doc); }}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); setVersionDoc(doc); } }}
+                        className="text-xs px-2.5 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0 bg-[var(--primary)] text-white hover:opacity-90 cursor-pointer"
+                      >
+                        Send v{(doc.currentVersion ?? 1) + 1}
+                      </span>
+                    )}
+                    <span className="text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0" style={{ backgroundColor: colors.bg, color: colors.text }}>
+                      {isDeliverable ? deliverable.label : doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
                     </span>
                   </div>
                 </button>
@@ -649,13 +725,23 @@ export function FilesSection({
 
                       {/* Secondary actions — icon group */}
                       <div className="flex items-center gap-0.5 border border-[var(--border)] rounded-md p-0.5">
-                        <button
-                          onClick={() => { const f = doc.signedFileId && doc.signedFile ? doc.signedFile : doc.file; handleDocDownload(f.id, f.filename); }}
-                          title="Download"
-                          className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
-                        >
-                          <Download size={14} />
-                        </button>
+                        {doc.file.type === "LINK" && doc.file.url ? (
+                          <button
+                            onClick={() => window.open(doc.file.url ?? "", "_blank", "noopener,noreferrer")}
+                            title="Open link"
+                            className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <ExternalLink size={14} />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => { const f = doc.signedFileId && doc.signedFile ? doc.signedFile : doc.file; handleDocDownload(f.id, f.filename); }}
+                            title="Download"
+                            className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                          >
+                            <Download size={14} />
+                          </button>
+                        )}
                         {doc.status === "signed" && (
                           <button
                             onClick={() => handleDownloadCertificate(doc.id)}
@@ -691,34 +777,44 @@ export function FilesSection({
                           </button>
                         )}
                         {!isArchived && doc.status !== "voided" && doc.status !== "expired" && (
-                          <label
-                            title="Upload new version"
-                            className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
-                          >
-                            <FilePlus size={14} />
-                            <input
-                              type="file"
-                              className="hidden"
-                              accept=".pdf,.doc,.docx,.odt,.jpg,.jpeg,.png,.webp"
-                              onChange={async (e) => {
-                                const f = e.target.files?.[0];
-                                if (!f) return;
-                                try {
-                                  const formData = new FormData();
-                                  formData.append("file", f);
-                                  await apiFetch(`/documents/${doc.id}/upload-version`, {
-                                    method: "POST",
-                                    body: formData,
-                                  });
-                                  loadDocuments();
-                                  success(`Version ${(doc.currentVersion ?? 1) + 1} uploaded`);
-                                } catch (err) {
-                                  showError(err instanceof Error ? err.message : "Failed to upload version");
-                                }
-                                e.target.value = "";
-                              }}
-                            />
-                          </label>
+                          isDeliverable ? (
+                            <button
+                              onClick={() => setVersionDoc(doc)}
+                              title="Upload new version"
+                              className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+                            >
+                              <FilePlus size={14} />
+                            </button>
+                          ) : (
+                            <label
+                              title="Upload new version"
+                              className="p-1.5 rounded hover:bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                            >
+                              <FilePlus size={14} />
+                              <input
+                                type="file"
+                                className="hidden"
+                                accept=".pdf,.doc,.docx,.odt,.jpg,.jpeg,.png,.webp"
+                                onChange={async (e) => {
+                                  const f = e.target.files?.[0];
+                                  if (!f) return;
+                                  try {
+                                    const formData = new FormData();
+                                    formData.append("file", f);
+                                    await apiFetch(`/documents/${doc.id}/upload-version`, {
+                                      method: "POST",
+                                      body: formData,
+                                    });
+                                    loadDocuments();
+                                    success(`Version ${(doc.currentVersion ?? 1) + 1} uploaded`);
+                                  } catch (err) {
+                                    showError(err instanceof Error ? err.message : "Failed to upload version");
+                                  }
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                          )
                         )}
                       </div>
 
@@ -933,22 +1029,42 @@ export function FilesSection({
         {files.length === 0 && documents.length === 0 && (
           <div className="text-center py-8">
             <FileX size={32} className="mx-auto text-[var(--muted-foreground)] mb-2" />
-            <p className="text-sm text-[var(--muted-foreground)]">No files or documents yet.</p>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              No files yet. Upload a file, or{" "}
+              {isArchived ? "request approval" : (
+                <button onClick={openRequestApproval} className="underline hover:text-[var(--foreground)]">request approval</button>
+              )}{" "}
+              on a design or draft.
+            </p>
           </div>
         )}
       </div>
+
+      {versionDoc && (
+        <DeliverableVersionModal
+          doc={versionDoc}
+          onClose={() => setVersionDoc(null)}
+          onUploaded={() => { setVersionDoc(null); loadDocuments(); }}
+        />
+      )}
 
       {/* Document Upload Modal */}
       {showDocUpload && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) { setShowDocUpload(false); resetDocForm(); } }}>
           <div className="bg-[var(--background)] rounded-xl shadow-lg w-full max-w-[480px] mx-4 p-6 space-y-4">
             <h3 className="text-lg font-semibold">Upload File</h3>
+            <AskApprovalCheckbox checked={askApproval} onChange={setAskApproval} />
+            {askApproval && (
+              <button type="button" onClick={() => { setShowDocUpload(false); setShowAddLink(true); }} className="text-xs underline text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+                Use a link instead
+              </button>
+            )}
             <div>
               <label className="text-sm text-[var(--muted-foreground)]">Title</label>
-              <input type="text" value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="e.g., Project Contract v2" className="w-full mt-1 px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm" />
+              <input type="text" value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="e.g., Homepage concept" className="w-full mt-1 px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm" />
             </div>
-            <div className="grid grid-cols-[140px_1fr] gap-3">
-              <div>
+            <div className={askApproval ? "" : "grid grid-cols-[140px_1fr] gap-3"}>
+              {!askApproval && <div>
                 <label className="text-sm text-[var(--muted-foreground)]">Type</label>
                 <select value={docType} onChange={(e) => setDocType(e.target.value)} className="w-full mt-1 px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm">
                   <option value="contract">Contract</option>
@@ -957,7 +1073,7 @@ export function FilesSection({
                   <option value="nda">NDA</option>
                   <option value="other">Other</option>
                 </select>
-              </div>
+              </div>}
               <div>
                 <label className="text-sm text-[var(--muted-foreground)]">File</label>
                 {docFile ? (
@@ -975,14 +1091,14 @@ export function FilesSection({
                 )}
               </div>
             </div>
-            {isPdf && canSign && (
+            {!askApproval && isPdf && canSign && (
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={requiresSignature} onChange={(e) => { setRequiresSignature(e.target.checked); if (e.target.checked) setRequiresApproval(false); }} className="accent-[var(--primary)]" />
                 <span className="text-sm">Collect signature</span>
                 {isTrialing && <TrialTag />}
               </label>
             )}
-            {isPdf && !canSign && (
+            {!askApproval && isPdf && !canSign && (
               <div className="flex items-center gap-2" data-testid="signature-locked">
                 <input type="checkbox" disabled className="cursor-not-allowed" aria-label="Collect signature" />
                 <span className="text-sm text-[var(--muted-foreground)]">Collect signature</span>
@@ -990,10 +1106,13 @@ export function FilesSection({
                 <UpgradeLink reason="e-signatures" />
               </div>
             )}
-            <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] flex items-center gap-1 transition-colors">
+            {askApproval && (
+              <DeliverableFields idPrefix="upload" note={approvalNote} onNoteChange={setApprovalNote} reminders={approvalReminders} onRemindersChange={setApprovalReminders} />
+            )}
+            {!askApproval && <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)] flex items-center gap-1 transition-colors">
               {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Advanced options
-            </button>
-            {showAdvanced && (
+            </button>}
+            {!askApproval && showAdvanced && (
               <div className="space-y-2.5 pl-5 border-l-2 border-[var(--border)]">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={requiresApproval} onChange={(e) => { setRequiresApproval(e.target.checked); if (e.target.checked) setRequiresSignature(false); }} className="accent-[var(--primary)]" />
@@ -1073,8 +1192,14 @@ export function FilesSection({
             )}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)]">
               <button onClick={() => { setShowDocUpload(false); resetDocForm(); }} className="px-4 py-1.5 border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--muted)]">Cancel</button>
-              <button onClick={() => handleDocUpload(false)} disabled={docUploading || !docTitle.trim() || !docFile} className="px-4 py-1.5 border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--muted)] disabled:opacity-40">Save Draft</button>
-              <button onClick={() => handleDocUpload(true)} disabled={docUploading || !docTitle.trim() || !docFile} className="px-4 py-1.5 bg-[var(--primary)] text-white rounded-lg text-sm hover:opacity-90 disabled:opacity-50">{docUploading ? "Uploading..." : "Upload & Send"}</button>
+              {askApproval ? (
+                <button onClick={() => handleDocUpload(true)} disabled={docUploading || !docTitle.trim() || !docFile} className="px-4 py-1.5 bg-[var(--primary)] text-white rounded-lg text-sm hover:opacity-90 disabled:opacity-50">{docUploading ? "Sending..." : "Send for approval"}</button>
+              ) : (
+                <>
+                  <button onClick={() => handleDocUpload(false)} disabled={docUploading || !docTitle.trim() || !docFile} className="px-4 py-1.5 border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--muted)] disabled:opacity-40">Save Draft</button>
+                  <button onClick={() => handleDocUpload(true)} disabled={docUploading || !docTitle.trim() || !docFile} className="px-4 py-1.5 bg-[var(--primary)] text-white rounded-lg text-sm hover:opacity-90 disabled:opacity-50">{docUploading ? "Uploading..." : "Upload & Send"}</button>
+                </>
+              )}
             </div>
             <p className="text-[11px] text-[var(--muted-foreground)] text-right -mt-2">Sending notifies the client immediately.</p>
           </div>
@@ -1086,6 +1211,12 @@ export function FilesSection({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) { setShowAddLink(false); resetLinkForm(); } }}>
           <div className="bg-[var(--background)] rounded-xl shadow-lg w-full max-w-[480px] mx-4 p-6 space-y-4">
             <h3 className="text-lg font-semibold">Add Link</h3>
+            <AskApprovalCheckbox checked={askApproval} onChange={setAskApproval} />
+            {askApproval && (
+              <button type="button" onClick={() => { setShowAddLink(false); setShowDocUpload(true); }} className="text-xs underline text-[var(--muted-foreground)] hover:text-[var(--foreground)]">
+                Upload a file instead
+              </button>
+            )}
             <p className="text-sm text-[var(--muted-foreground)]">Link to an external resource like a Nextcloud document, Canva design, or any other URL.</p>
             <div>
               <label className="text-sm text-[var(--muted-foreground)]">URL</label>
@@ -1108,16 +1239,20 @@ export function FilesSection({
                 className="w-full mt-1 px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm"
               />
             </div>
-            <div>
-              <label className="text-sm text-[var(--muted-foreground)]">Description (optional)</label>
-              <textarea
-                value={linkDescription}
-                onChange={(e) => setLinkDescription(e.target.value)}
-                placeholder="What is this link for?"
-                rows={2}
-                className="w-full mt-1 px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm resize-none"
-              />
-            </div>
+            {askApproval ? (
+              <DeliverableFields idPrefix="link" note={approvalNote} onNoteChange={setApprovalNote} reminders={approvalReminders} onRemindersChange={setApprovalReminders} />
+            ) : (
+              <div>
+                <label className="text-sm text-[var(--muted-foreground)]">Description (optional)</label>
+                <textarea
+                  value={linkDescription}
+                  onChange={(e) => setLinkDescription(e.target.value)}
+                  placeholder="What is this link for?"
+                  rows={2}
+                  className="w-full mt-1 px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm resize-none"
+                />
+              </div>
+            )}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)]">
               <button onClick={() => { setShowAddLink(false); resetLinkForm(); }} className="px-4 py-1.5 border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--muted)]">Cancel</button>
               <button
@@ -1125,7 +1260,7 @@ export function FilesSection({
                 disabled={linkSaving || !linkUrl.trim() || !linkTitle.trim()}
                 className="px-4 py-1.5 bg-[var(--primary)] text-white rounded-lg text-sm hover:opacity-90 disabled:opacity-50"
               >
-                {linkSaving ? "Adding..." : "Add link"}
+                {linkSaving ? (askApproval ? "Sending..." : "Adding...") : askApproval ? "Send for approval" : "Add link"}
               </button>
             </div>
           </div>

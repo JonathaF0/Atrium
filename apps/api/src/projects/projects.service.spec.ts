@@ -92,6 +92,28 @@ describe("ProjectsService", () => {
     expect(result.meta.page).toBe(1);
   });
 
+  it("findByClient returns a pendingApprovals count per project", async () => {
+    mockPrisma.project.findMany.mockReturnValue(
+      Promise.resolve([{ id: "p1", name: "Site", _count: { documents: 2 } }]),
+    );
+    mockPrisma.project.count = mock(() => Promise.resolve(1));
+    const res = await service.findByClient("client-1", "org-1", {});
+    expect(res.data[0]).toEqual(expect.objectContaining({ id: "p1", pendingApprovals: 2 }));
+    expect(res.data[0]).not.toHaveProperty("_count");
+  });
+
+  it("findOne excludes files that belong to a document", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(Promise.resolve({ id: "p1", files: [] }));
+    await service.findOne("p1", "org-1");
+    expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          files: { where: { documents: { none: {} }, signedDocuments: { none: {} }, documentVersions: { none: {} } } },
+        }),
+      }),
+    );
+  });
+
   it("findOne throws NotFoundException when not found", async () => {
     mockPrisma.project.findFirst.mockReturnValue(Promise.resolve(null));
 
@@ -174,14 +196,45 @@ describe("ProjectsService", () => {
 
     const result = await service.findOneByClient("proj-active", "user-client", "org-1");
 
-    expect(result).toEqual(project);
+    expect(result).toEqual({ ...project, openVotes: 0 });
     expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
+        include: expect.objectContaining({
+          files: { where: { documents: { none: {} }, signedDocuments: { none: {} }, documentVersions: { none: {} } } },
+        }),
         where: expect.objectContaining({
           id: "proj-active",
           organizationId: "org-1",
           archivedAt: null,
           clients: { some: { userId: "user-client" } },
+        }),
+      }),
+    );
+  });
+
+  it("findOneByClient counts open decision tasks the client hasn't voted on, across all pages", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(
+      Promise.resolve({ id: "p1", files: [], _count: { tasks: 3 } }),
+    );
+
+    const result = await service.findOneByClient("p1", "user-client", "org-1");
+
+    expect(result).toEqual({ id: "p1", files: [], openVotes: 3 });
+    expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          _count: {
+            select: {
+              tasks: {
+                where: {
+                  type: "decision",
+                  closedAt: null,
+                  status: { notIn: ["done", "cancelled"] },
+                  votes: { none: { userId: "user-client" } },
+                },
+              },
+            },
+          },
         }),
       }),
     );

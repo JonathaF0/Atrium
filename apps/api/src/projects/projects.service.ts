@@ -17,6 +17,14 @@ interface ProjectUpdateInput {
   endDate?: Date | null;
 }
 
+// Files that belong to a document (or one of its versions) are listed under
+// Documents, not as plain project files.
+const STANDALONE_FILES = {
+  documents: { none: {} },
+  signedDocuments: { none: {} },
+  documentVersions: { none: {} },
+};
+
 @Injectable()
 export class ProjectsService {
   constructor(private prisma: PrismaService) {}
@@ -72,7 +80,7 @@ export class ProjectsService {
     const project = await this.prisma.project.findFirst({
       where: { id, organizationId },
       include: {
-        files: true,
+        files: { where: STANDALONE_FILES },
         clients: { select: { userId: true } },
         labels: { include: { label: true } },
       },
@@ -94,10 +102,26 @@ export class ProjectsService {
         archivedAt: null,
         clients: { some: { userId: clientUserId } },
       },
-      include: { files: true },
+      include: {
+        files: { where: STANDALONE_FILES },
+        // Counted server-side so the portal banner isn't limited to the task page it has loaded.
+        _count: {
+          select: {
+            tasks: {
+              where: {
+                type: "decision",
+                closedAt: null,
+                status: { notIn: ["done", "cancelled"] },
+                votes: { none: { userId: clientUserId } },
+              },
+            },
+          },
+        },
+      },
     });
     if (!project) throw new NotFoundException("Project not found");
-    return project;
+    const { _count, ...rest } = project;
+    return { ...rest, openVotes: _count?.tasks ?? 0 };
   }
 
   async findByClient(
@@ -119,13 +143,17 @@ export class ProjectsService {
     const [data, total] = await Promise.all([
       this.prisma.project.findMany({
         where,
+        include: {
+          _count: { select: { documents: { where: { requiresApproval: true, status: "pending" } } } },
+        },
         orderBy: { createdAt: "desc" },
         ...paginationArgs(page, limit),
       }),
       this.prisma.project.count({ where }),
     ]);
 
-    return paginatedResponse(data, total, page, limit);
+    const rows = data.map(({ _count, ...p }) => ({ ...p, pendingApprovals: _count.documents }));
+    return paginatedResponse(rows, total, page, limit);
   }
 
   async create(data: CreateProjectDto, organizationId: string) {

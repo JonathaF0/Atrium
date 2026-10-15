@@ -225,6 +225,16 @@ export class FilesService {
       throw new BadRequestException("url can only be updated on link-type files");
     }
 
+    if (dto.url !== undefined) {
+      const [linkedDocuments, linkedVersions]: [number, number] = await Promise.all([
+        this.prisma.document.count({ where: { fileId: id } }),
+        this.prisma.documentVersion.count({ where: { fileId: id } }),
+      ]);
+      if (linkedDocuments > 0 || linkedVersions > 0) {
+        throw new BadRequestException("This link is under client review. Upload a new version instead");
+      }
+    }
+
     await assertProjectAccess(this.prisma, file.projectId, userId, role, organizationId);
 
     const data: { filename?: string; description?: string; url?: string } = {};

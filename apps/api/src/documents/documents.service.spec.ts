@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from "@nestjs/common";
 import type { PrismaService } from "../prisma/prisma.service";
 import type { StorageProvider } from "../files/storage/storage.interface";
@@ -272,6 +273,43 @@ describe("DocumentsService", () => {
       reminderIntervalDays: 3,
     };
 
+    it("forces approval on and signature off for deliverables, with reminders on by default", async () => {
+      await service.create(
+        { projectId: PROJECT_ID, type: "deliverable", title: "Homepage v1", requiresSignature: true, requiresApproval: false, note: "  First pass  " },
+        FILE_ID, ORG, USER,
+      );
+      expect(mockPrisma.document.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            type: "deliverable",
+            requiresApproval: true,
+            requiresSignature: false,
+            reminderEnabled: true,
+            requestNote: "First pass",
+          }),
+        }),
+      );
+    });
+
+    it("lets the agency turn deliverable reminders off", async () => {
+      await service.create(
+        { projectId: PROJECT_ID, type: "deliverable", title: "Logo", reminderEnabled: false },
+        FILE_ID, ORG, USER,
+      );
+      expect(mockPrisma.document.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ reminderEnabled: false }) }),
+      );
+    });
+
+    it("leaves non-deliverable defaults unchanged", async () => {
+      await service.create({ projectId: PROJECT_ID, type: "contract", title: "MSA" }, FILE_ID, ORG, USER);
+      expect(mockPrisma.document.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ requiresApproval: false, requiresSignature: false, reminderEnabled: false, requestNote: null }),
+        }),
+      );
+    });
+
     it("throws NotFoundException when project does not belong to org", async () => {
       mockPrisma.project.findFirst.mockReturnValue(Promise.resolve(null));
 
@@ -503,6 +541,23 @@ describe("DocumentsService", () => {
       }
     });
 
+    it("voids a declined deliverable", async () => {
+      mockPrisma.document.findFirst.mockReturnValue(
+        Promise.resolve(makeDoc({ type: "deliverable", status: "declined" })),
+      );
+      await service.voidDocument(DOC_ID, ORG, USER);
+      expect(mockPrisma.document.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "voided" }) }),
+      );
+    });
+
+    it("still refuses to void a declined contract", async () => {
+      mockPrisma.document.findFirst.mockReturnValue(
+        Promise.resolve(makeDoc({ type: "contract", status: "declined" })),
+      );
+      await expect(service.voidDocument(DOC_ID, ORG, USER)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
     it("voids a draft document successfully", async () => {
       mockPrisma.document.findFirst.mockReturnValue(
         Promise.resolve(makeDoc({ status: "draft" })),
@@ -584,6 +639,11 @@ describe("DocumentsService", () => {
         Promise.resolve({ id: "pc-1", projectId: PROJECT_ID, userId: CLIENT_USER }),
       );
     }
+
+    it("still blocks changing a decided contract", async () => {
+      mockPrisma.document.findFirst.mockReturnValue(Promise.resolve(makeDoc({ type: "contract", status: "accepted", requiresApproval: true })));
+      await expect(service.respond(DOC_ID, CLIENT_USER, ORG, "declined")).rejects.toBeInstanceOf(BadRequestException);
+    });
 
     it("throws NotFoundException when document not found", async () => {
       mockPrisma.document.findFirst.mockReturnValue(Promise.resolve(null));
@@ -717,6 +777,87 @@ describe("DocumentsService", () => {
       // Should not throw
       await service.respond(DOC_ID, CLIENT_USER, ORG, "accepted");
       expect(mockPrisma.documentResponse.create).toHaveBeenCalled();
+    });
+  });
+
+  describe("respond() — deliverables", () => {
+    function setupDeliverable(overrides: Record<string, unknown> = {}) {
+      const doc = makeDoc({ type: "deliverable", status: "pending", requiresApproval: true, currentVersion: 2, ...overrides });
+      mockPrisma.document.findFirst.mockReturnValue(Promise.resolve(doc));
+      mockPrisma.document.findUnique.mockReturnValue(Promise.resolve(doc));
+      mockPrisma.projectClient.findFirst.mockReturnValue(Promise.resolve({ id: "pc-1", projectId: PROJECT_ID, userId: CLIENT_USER }));
+      mockPrisma.documentResponse.create.mockReturnValue(Promise.resolve({ id: "resp-1", action: "accepted" }));
+    }
+
+    it("requires a version for deliverable decisions", async () => {
+      setupDeliverable();
+      await expect(service.respond(DOC_ID, CLIENT_USER, ORG, "accepted")).rejects.toThrow("version is required");
+      expect(mockPrisma.documentResponse.create).not.toHaveBeenCalled();
+    });
+
+    it("requires a note when requesting changes", async () => {
+      setupDeliverable();
+      await expect(service.respond(DOC_ID, CLIENT_USER, ORG, "declined", undefined, undefined, "   ", 2)).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("one client's decision sets the status and replaces earlier decisions", async () => {
+      setupDeliverable();
+      await service.respond(DOC_ID, CLIENT_USER, ORG, "accepted", undefined, undefined, undefined, 2);
+      expect(mockPrisma.documentResponse.deleteMany).toHaveBeenCalledWith({ where: { documentId: DOC_ID, fieldId: null } });
+      expect(mockPrisma.document.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: DOC_ID }, data: { status: "accepted" } }),
+      );
+      expect(mockPrisma.projectClient.count).not.toHaveBeenCalled();
+    });
+
+    it.each(["accepted", "declined"])("allows changing a decision after '%s'", async (status) => {
+      setupDeliverable({ status });
+      await service.respond(DOC_ID, CLIENT_USER, ORG, "declined", undefined, undefined, "Bigger logo", 2);
+      expect(mockPrisma.document.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: "declined" } }));
+    });
+
+    it.each(["draft", "voided", "expired"])("still blocks '%s' deliverables", async (status) => {
+      setupDeliverable({ status });
+      await expect(service.respond(DOC_ID, CLIENT_USER, ORG, "accepted")).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it("returns 409 when the client decided on an outdated version", async () => {
+      setupDeliverable({ currentVersion: 3 });
+      await expect(service.respond(DOC_ID, CLIENT_USER, ORG, "accepted", undefined, undefined, undefined, 2)).rejects.toBeInstanceOf(ConflictException);
+      expect(mockPrisma.documentResponse.create).not.toHaveBeenCalled();
+    });
+
+    it("serializes decisions under the row lock and re-reads the version inside it", async () => {
+      // Outer read sees v2, but a v3 upload commits before the lock is taken.
+      mockPrisma.document.findFirst.mockReturnValue(Promise.resolve(makeDoc({ type: "deliverable", status: "pending", requiresApproval: true, currentVersion: 2 })));
+      mockPrisma.document.findUnique.mockReturnValue(Promise.resolve(makeDoc({ type: "deliverable", status: "pending", currentVersion: 3 })));
+      mockPrisma.projectClient.findFirst.mockReturnValue(Promise.resolve({ id: "pc-1" }));
+      await expect(service.respond(DOC_ID, CLIENT_USER, ORG, "accepted", undefined, undefined, undefined, 2)).rejects.toBeInstanceOf(ConflictException);
+      expect(mockPrisma.$queryRawUnsafe).toHaveBeenCalledWith(expect.stringContaining("FOR UPDATE"), DOC_ID);
+    });
+
+    it("logs the in-lock version in the audit trail", async () => {
+      mockPrisma.document.findFirst.mockReturnValue(Promise.resolve(makeDoc({ type: "deliverable", status: "pending", requiresApproval: true, currentVersion: 2 })));
+      mockPrisma.document.findUnique.mockReturnValue(Promise.resolve(makeDoc({ type: "deliverable", status: "pending", currentVersion: 2 })));
+      mockPrisma.projectClient.findFirst.mockReturnValue(Promise.resolve({ id: "pc-1" }));
+      mockPrisma.documentResponse.create.mockReturnValue(Promise.resolve({ id: "resp-1", action: "accepted" }));
+      await service.respond(DOC_ID, CLIENT_USER, ORG, "accepted", undefined, undefined, undefined, 2);
+      expect(mockAuditService.log).toHaveBeenCalledWith(DOC_ID, "accepted", expect.objectContaining({ metadata: { reason: null, version: 2 } }));
+    });
+
+    it("keeps the change note in the audit trail", async () => {
+      setupDeliverable();
+      await service.respond(DOC_ID, CLIENT_USER, ORG, "declined", "1.2.3.4", "ua", "Bigger logo", 2);
+      expect(mockAuditService.log).toHaveBeenCalledWith(DOC_ID, "declined", {
+        userId: CLIENT_USER, ipAddress: "1.2.3.4", userAgent: "ua", metadata: { reason: "Bigger logo", version: 2 },
+      });
+    });
+
+    it("notifies the agency once with the deciding client", async () => {
+      setupDeliverable();
+      await service.respond(DOC_ID, CLIENT_USER, ORG, "accepted", undefined, undefined, undefined, 2);
+      expect(mockNotifications.notifyDocumentResponded).toHaveBeenCalledTimes(1);
+      expect(mockNotifications.notifyDocumentResponded).toHaveBeenCalledWith(DOC_ID, CLIENT_USER, "accepted");
     });
   });
 
@@ -1185,6 +1326,23 @@ describe("DocumentsService", () => {
   // generateAccessToken()
   // -------------------------------------------------------------------------
 
+  describe("getViewStream()", () => {
+    it("returns the URL for a link deliverable instead of streaming", async () => {
+      mockPrisma.document.findFirst.mockReturnValue(
+        Promise.resolve(makeDoc({
+          type: "deliverable",
+          file: { id: FILE_ID, type: "LINK", url: "https://figma.com/file/abc", storageKey: null, filename: "Homepage" },
+        })),
+      );
+      mockPrisma.projectClient.findFirst.mockReturnValue(Promise.resolve({ id: "pc-1" }));
+
+      const result = await service.getViewStream(DOC_ID, CLIENT_USER, ORG, "member");
+
+      expect(result).toEqual({ kind: "link", url: "https://figma.com/file/abc" });
+      expect(mockAuditService.log).toHaveBeenCalledWith(DOC_ID, "viewed", { userId: CLIENT_USER });
+    });
+  });
+
   describe("generateAccessToken()", () => {
     it("throws NotFoundException when document does not belong to org", async () => {
       mockPrisma.document.findFirst.mockReturnValue(Promise.resolve(null));
@@ -1624,6 +1782,76 @@ describe("DocumentsService", () => {
         }),
       );
     });
+
+    it("puts a sent deliverable back in review with the new note, restarts reminders and notifies clients", async () => {
+      setupUploadVersion({ type: "deliverable", status: "declined", currentVersion: 1 });
+      mockPrisma.document.update.mockReturnValue(
+        Promise.resolve(makeDoc({ type: "deliverable", status: "pending", currentVersion: 2, file: {} })),
+      );
+      await service.uploadVersion(DOC_ID, ORG, USER, pdfFile, "Logo is bigger now");
+      expect(mockPrisma.document.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "pending", requestNote: "Logo is bigger now", lastReminderAt: null, sentAt: expect.any(Date) }),
+        }),
+      );
+      expect(mockNotifications.notifyDocumentUploaded).toHaveBeenCalledWith(DOC_ID);
+      expect(mockActivityService.create).toHaveBeenCalledWith(expect.objectContaining({ action: "version_uploaded" }));
+    });
+
+    it("does not notify or touch requestNote for contracts", async () => {
+      setupUploadVersion({ type: "contract", status: "pending" });
+      await service.uploadVersion(DOC_ID, ORG, USER, pdfFile);
+      const data = (mockPrisma.document.update.mock.calls.at(-1)![0] as { data: Record<string, unknown> }).data;
+      expect(data.requestNote).toBeUndefined();
+      expect(mockNotifications.notifyDocumentUploaded).not.toHaveBeenCalled();
+      expect(mockActivityService.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("linkVersion()", () => {
+    function setupLinkDoc(overrides: Record<string, unknown> = {}) {
+      mockPrisma.$transaction.mockImplementation(
+        (fn: (tx: typeof mockPrisma) => unknown) => fn(mockPrisma),
+      );
+      mockPrisma.$queryRawUnsafe.mockReturnValue(Promise.resolve([]));
+      mockPrisma.document.findFirst.mockReturnValue(Promise.resolve(makeDoc({
+        type: "deliverable", status: "declined", currentVersion: 1,
+        file: { id: FILE_ID, type: "LINK", url: "https://staging.example.com", storageKey: null, filename: "Staging" },
+        ...overrides,
+      })));
+      mockPrisma.documentVersion.create.mockReturnValue(Promise.resolve({ id: "ver-1" }));
+      mockPrisma.file.create.mockReturnValue(Promise.resolve({ id: "file-2" }));
+      mockPrisma.document.update.mockReturnValue(
+        Promise.resolve(makeDoc({ type: "deliverable", status: "pending", currentVersion: 2, file: {} })),
+      );
+    }
+
+    it("snapshots the current link, creates a new LINK file and resets to pending", async () => {
+      setupLinkDoc();
+      await service.linkVersion(DOC_ID, ORG, USER, "https://staging.example.com/v2", "Fixed nav");
+      expect(mockPrisma.$queryRawUnsafe).toHaveBeenCalled();
+      expect(mockPrisma.documentVersion.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ documentId: DOC_ID, fileId: FILE_ID, version: 1 }) }),
+      );
+      expect(mockPrisma.file.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ type: "LINK", url: "https://staging.example.com/v2", filename: "Staging" }) }),
+      );
+      expect(mockPrisma.document.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ fileId: "file-2", currentVersion: 2, status: "pending", requestNote: "Fixed nav" }) }),
+      );
+      expect(mockNotifications.notifyDocumentUploaded).toHaveBeenCalledWith(DOC_ID);
+      expect(mockActivityService.create).toHaveBeenCalledWith(expect.objectContaining({ action: "version_uploaded" }));
+    });
+
+    it("refuses non-deliverables", async () => {
+      setupLinkDoc({ type: "contract" });
+      await expect(service.linkVersion(DOC_ID, ORG, USER, "https://x.com")).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it.each(["voided", "expired"])("refuses %s deliverables", async (status) => {
+      setupLinkDoc({ status });
+      await expect(service.linkVersion(DOC_ID, ORG, USER, "https://x.com")).rejects.toBeInstanceOf(BadRequestException);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -1954,6 +2182,60 @@ describe("DocumentsService", () => {
       expect(mockAuditService.log).toHaveBeenCalledWith(DOC_ID, "viewed", {
         userId: CLIENT_USER, ipAddress: "1.2.3.4", userAgent: "ua",
       });
+    });
+  });
+
+  describe("findPendingApprovals()", () => {
+    it("is org-scoped, excludes archived projects, and lists changes requested first", async () => {
+      mockPrisma.document.findMany.mockReturnValue(Promise.resolve([
+        { id: "d2", title: "B", type: "deliverable", status: "declined", currentVersion: 2, sentAt: new Date("2026-10-05"), projectId: PROJECT_ID, project: { name: "Site" }, responses: [{ reason: "Bigger", user: { name: "Elena" } }] },
+        { id: "d1", title: "A", type: "deliverable", status: "pending", currentVersion: 1, sentAt: new Date("2026-10-01"), projectId: PROJECT_ID, project: { name: "Site" }, responses: [] },
+      ]));
+
+      const result = await service.findPendingApprovals(ORG, PROJECT_ID);
+
+      expect(mockPrisma.document.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG, projectId: PROJECT_ID, requiresApproval: true,
+          project: { archivedAt: null },
+          OR: [
+            { type: "deliverable", status: { in: ["pending", "declined"] } },
+            { type: { not: "deliverable" }, status: "pending" },
+          ],
+        }),
+        orderBy: [{ status: "asc" }, { sentAt: "asc" }],
+      }));
+      expect(result.map((r) => r.id)).toEqual(["d2", "d1"]);
+      expect(result[0]).toEqual(expect.objectContaining({ version: 2, projectName: "Site", latestReason: "Bigger", decidedBy: "Elena" }));
+    });
+
+    it("omits the project filter when none is given", async () => {
+      mockPrisma.document.findMany.mockReturnValue(Promise.resolve([]));
+      await service.findPendingApprovals(ORG);
+      const where = (mockPrisma.document.findMany.mock.calls.at(-1)![0] as { where: Record<string, unknown> }).where;
+      expect(where.projectId).toBeUndefined();
+    });
+  });
+
+  describe("findByProjectForClient() - deliverable decisions", () => {
+    it("attaches the deciding client's response to deliverables only", async () => {
+      mockPrisma.projectClient.findFirst.mockReturnValue(Promise.resolve({ id: "pc-1" }));
+      mockPrisma.document.findMany.mockReturnValue(Promise.resolve([
+        makeDoc({ id: "d1", type: "deliverable", status: "accepted" }),
+        makeDoc({ id: "d2", type: "contract", status: "pending" }),
+      ]));
+      mockPrisma.document.count.mockReturnValue(Promise.resolve(2));
+      mockPrisma.documentResponse.findMany.mockReturnValue(Promise.resolve([
+        { documentId: "d1", action: "accepted", reason: null, createdAt: new Date(), user: { name: "Elena" } },
+      ]));
+
+      const res = await service.findByProjectForClient(PROJECT_ID, CLIENT_USER, ORG);
+
+      expect(mockPrisma.documentResponse.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { documentId: { in: ["d1"] }, fieldId: null },
+      }));
+      expect(res.data[0].decision?.user.name).toBe("Elena");
+      expect(res.data[1].decision).toBeNull();
     });
   });
 });

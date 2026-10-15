@@ -4,10 +4,13 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
 } from "@nestjs/common";
 import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { randomBytes, createHash } from "crypto";
+import type { Readable } from "stream";
+import type { DocumentResponse } from "@atrium/database";
 import { PrismaService } from "../prisma/prisma.service";
 import {
   paginationArgs,
@@ -24,6 +27,19 @@ import { DocumentAuditService } from "./document-audit.service";
 import { BillingService } from "../billing/billing.service";
 import { planFeatureMessage } from "../common/helpers/plan-feature";
 
+export interface PendingApproval {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  version: number;
+  sentAt: Date | null;
+  projectId: string;
+  projectName: string;
+  latestReason: string | null;
+  decidedBy: string | null;
+}
+
 /** Max PDF size allowed for signing (50MB) to prevent OOM. */
 const MAX_SIGNABLE_PDF_BYTES = 50 * 1024 * 1024;
 const ALLOWED_SIGNATURE_MIMES = new Set(["image/png", "image/jpeg"]);
@@ -34,10 +50,13 @@ const ALLOWED_ACTIONS: Record<string, string[]> = {
   proposal: ["accepted", "declined"],
   nda: ["accepted", "declined"],
   other: ["accepted", "declined"],
+  deliverable: ["accepted", "declined"],
 };
 
 /** Statuses that block respond/sign actions. */
 const RESPOND_BLOCKED_STATUSES = new Set(["draft", "voided", "expired", "accepted", "declined", "signed"]);
+/** Deliverables can be re-decided; only these block a decision. */
+const DELIVERABLE_RESPOND_BLOCKED_STATUSES = new Set(["draft", "voided", "expired"]);
 const SIGN_BLOCKED_STATUSES = new Set(["draft", "voided", "expired", "signed"]);
 
 /** Shared include shape for document queries that need full details. */
@@ -80,6 +99,8 @@ export class DocumentsService {
     });
     if (!project) throw new NotFoundException("Project not found");
 
+    const isDeliverable: boolean = dto.type === "deliverable";
+
     const document = await this.prisma.document.create({
       data: {
         type: dto.type,
@@ -89,12 +110,13 @@ export class DocumentsService {
         organizationId: orgId,
         uploadedById,
         status: "draft",
-        requiresSignature: dto.requiresSignature ?? false,
-        requiresApproval: dto.requiresApproval ?? false,
+        requiresSignature: isDeliverable ? false : (dto.requiresSignature ?? false),
+        requiresApproval: isDeliverable ? true : (dto.requiresApproval ?? false),
         options: dto.options || null,
         signingOrderEnabled: dto.signingOrderEnabled ?? false,
-        reminderEnabled: dto.reminderEnabled ?? false,
+        reminderEnabled: dto.reminderEnabled ?? isDeliverable,
         reminderIntervalDays: dto.reminderIntervalDays ?? 3,
+        requestNote: dto.note?.trim() || null,
       },
       include: DOCUMENT_FULL_INCLUDE,
     });
@@ -163,6 +185,8 @@ export class DocumentsService {
     if (!doc) throw new NotFoundException("Document not found");
 
     const voidableStatuses = new Set(["draft", "pending"]);
+    // A declined deliverable is not final: the agency can void it to clear it.
+    if (doc.type === "deliverable") voidableStatuses.add("declined");
     if (!voidableStatuses.has(doc.status)) {
       throw new BadRequestException(
         `Cannot void a document with status "${doc.status}"`,
@@ -283,7 +307,59 @@ export class DocumentsService {
       }),
       this.prisma.document.count({ where }),
     ]);
-    return paginatedResponse(data, total, page, limit);
+
+    const deliverableIds: string[] = data.filter((d) => d.type === "deliverable").map((d) => d.id);
+    const decisions = deliverableIds.length
+      ? await this.prisma.documentResponse.findMany({
+          where: { documentId: { in: deliverableIds }, fieldId: null },
+          select: { documentId: true, action: true, reason: true, createdAt: true, user: { select: { name: true } } },
+        })
+      : [];
+    const byDoc = new Map(decisions.map((r) => [r.documentId, r]));
+    const rows = data.map((d) => ({ ...d, decision: byDoc.get(d.id) ?? null }));
+    return paginatedResponse(rows, total, page, limit);
+  }
+
+  async findPendingApprovals(orgId: string, projectId?: string): Promise<PendingApproval[]> {
+    const docs = await this.prisma.document.findMany({
+      where: {
+        organizationId: orgId,
+        requiresApproval: true,
+        project: { archivedAt: null },
+        OR: [
+          { type: "deliverable", status: { in: ["pending", "declined"] } },
+          { type: { not: "deliverable" }, status: "pending" },
+        ],
+        ...(projectId ? { projectId } : {}),
+      },
+      select: {
+        id: true, title: true, type: true, status: true, currentVersion: true, sentAt: true, projectId: true,
+        project: { select: { name: true } },
+        responses: {
+          where: { fieldId: null },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { reason: true, user: { select: { name: true } } },
+        },
+      },
+      // "declined" sorts before "pending", so changes-requested items come first.
+      orderBy: [{ status: "asc" }, { sentAt: "asc" }],
+      take: 50,
+    });
+
+    return docs
+      .map((d) => ({
+        id: d.id,
+        title: d.title,
+        type: d.type,
+        status: d.status,
+        version: d.currentVersion,
+        sentAt: d.sentAt,
+        projectId: d.projectId,
+        projectName: d.project.name,
+        latestReason: d.responses[0]?.reason ?? null,
+        decidedBy: d.responses[0]?.user.name ?? null,
+      }));
   }
 
   async assertDocumentAccess(id: string, orgId: string) {
@@ -311,13 +387,16 @@ export class DocumentsService {
     ipAddress?: string,
     userAgent?: string,
     reason?: string,
+    version?: number,
   ) {
     const doc = await this.prisma.document.findFirst({
       where: { id, organizationId: orgId },
     });
     if (!doc) throw new NotFoundException("Document not found");
 
-    if (RESPOND_BLOCKED_STATUSES.has(doc.status)) {
+    const isDeliverable: boolean = doc.type === "deliverable";
+    const blocked: Set<string> = isDeliverable ? DELIVERABLE_RESPOND_BLOCKED_STATUSES : RESPOND_BLOCKED_STATUSES;
+    if (blocked.has(doc.status)) {
       throw new BadRequestException(
         `Cannot respond to a document with status "${doc.status}"`,
       );
@@ -348,34 +427,34 @@ export class DocumentsService {
       );
     }
 
-    // For non-signing responses, find existing response without a fieldId
-    const existing = await this.prisma.documentResponse.findFirst({
-      where: { documentId: id, userId, fieldId: null },
-    });
+    const trimmedReason: string | null = reason?.trim() || null;
+    if (isDeliverable && action === "declined" && !trimmedReason) {
+      throw new BadRequestException("Tell the agency what to change");
+    }
 
-    let response;
-    if (existing) {
-      response = await this.prisma.documentResponse.update({
-        where: { id: existing.id },
-        data: { action, reason: reason || null, ipAddress, userAgent },
-      });
+    if (isDeliverable && version === undefined) {
+      throw new BadRequestException("version is required");
+    }
+
+    let response: DocumentResponse;
+    let decidedVersion: number = doc.currentVersion;
+    if (isDeliverable) {
+      const decision = await this.decideDeliverable(id, userId, action, trimmedReason, version as number, ipAddress, userAgent);
+      response = decision.response;
+      decidedVersion = decision.currentVersion;
     } else {
-      response = await this.prisma.documentResponse.create({
-        data: {
-          documentId: id,
-          userId,
-          action,
-          reason: reason || null,
-          ipAddress,
-          userAgent,
-        },
-      });
+      response = await this.upsertResponse(id, userId, action, trimmedReason, ipAddress, userAgent);
     }
 
     // Update document status based on all responses
-    await this.updateDocumentStatus(id);
+    if (!isDeliverable) await this.updateDocumentStatus(id);
 
-    this.auditService.log(id, action, { userId, ipAddress, userAgent });
+    this.auditService.log(id, action, {
+      userId,
+      ipAddress,
+      userAgent,
+      metadata: { reason: trimmedReason, version: decidedVersion },
+    });
     this.notifications.notifyDocumentResponded(id, userId, action);
 
     this.activityService
@@ -391,6 +470,71 @@ export class DocumentsService {
       .catch((err) => this.logger.warn({ err }, "Failed to log document response activity"));
 
     return response;
+  }
+
+  private async upsertResponse(
+    id: string,
+    userId: string,
+    action: string,
+    reason: string | null,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<DocumentResponse> {
+    // For non-signing responses, find existing response without a fieldId
+    const existing = await this.prisma.documentResponse.findFirst({
+      where: { documentId: id, userId, fieldId: null },
+    });
+
+    let response: DocumentResponse;
+    if (existing) {
+      response = await this.prisma.documentResponse.update({
+        where: { id: existing.id },
+        data: { action, reason, ipAddress, userAgent },
+      });
+    } else {
+      response = await this.prisma.documentResponse.create({
+        data: {
+          documentId: id,
+          userId,
+          action,
+          reason,
+          ipAddress,
+          userAgent,
+        },
+      });
+    }
+
+    return response;
+  }
+
+  /** Any one client decides a deliverable: the latest decision replaces all others for the current version. */
+  private async decideDeliverable(
+    id: string,
+    userId: string,
+    action: string,
+    reason: string | null,
+    version: number,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<{ response: DocumentResponse; currentVersion: number }> {
+    return this.prisma.$transaction(async (tx) => {
+      // Same lock uploadVersion takes, so a decision and a new version can't interleave.
+      await tx.$queryRawUnsafe(`SELECT id FROM "document" WHERE id = $1 FOR UPDATE`, id);
+      const current = await tx.document.findUnique({ where: { id }, select: { currentVersion: true, status: true } });
+      if (!current) throw new NotFoundException("Document not found");
+      if (DELIVERABLE_RESPOND_BLOCKED_STATUSES.has(current.status)) {
+        throw new BadRequestException(`Cannot respond to a document with status "${current.status}"`);
+      }
+      if (version !== current.currentVersion) {
+        throw new ConflictException("A newer version was uploaded. Please review it first.");
+      }
+      await tx.documentResponse.deleteMany({ where: { documentId: id, fieldId: null } });
+      const created = await tx.documentResponse.create({
+        data: { documentId: id, userId, action, reason, ipAddress, userAgent },
+      });
+      await tx.document.update({ where: { id }, data: { status: action } });
+      return { response: created, currentVersion: current.currentVersion };
+    });
   }
 
   private async updateDocumentStatus(documentId: string) {
@@ -440,7 +584,15 @@ export class DocumentsService {
     }
   }
 
-  async getViewStream(id: string, userId: string, orgId: string, role: string) {
+  async getViewStream(
+    id: string,
+    userId: string,
+    orgId: string,
+    role: string,
+  ): Promise<
+    | { kind: "stream"; body: Readable; contentType: string; filename: string }
+    | { kind: "link"; url: string }
+  > {
     const doc = await this.prisma.document.findFirst({
       where: { id, organizationId: orgId },
       include: { file: true, signedFile: true },
@@ -450,12 +602,16 @@ export class DocumentsService {
     await assertProjectAccess(this.prisma, doc.projectId, userId, role);
 
     const fileToView = doc.signedFile ?? doc.file;
+    if (fileToView.type === "LINK" && fileToView.url) {
+      this.auditService.log(id, "viewed", { userId });
+      return { kind: "link" as const, url: fileToView.url };
+    }
     if (!fileToView.storageKey) throw new NotFoundException("Document file has no storage object");
     const { body, contentType } = await this.storage.download(fileToView.storageKey);
 
     this.auditService.log(id, "downloaded", { userId });
 
-    return { body, contentType, filename: fileToView.filename };
+    return { kind: "stream" as const, body, contentType, filename: fileToView.filename };
   }
 
   async setSignatureFields(
@@ -1067,6 +1223,9 @@ export class DocumentsService {
           currentVersion: newVersion,
           signedFileId: null,
           ...(wasSent ? { status: "pending" } : {}),
+          ...(doc.type === "deliverable"
+            ? { requestNote: note?.trim() || null, ...(wasSent ? { sentAt: new Date(), lastReminderAt: null } : {}) }
+            : {}),
         },
         include: DOCUMENT_FULL_INCLUDE,
       });
@@ -1088,6 +1247,89 @@ export class DocumentsService {
       metadata: { version: result.currentVersion, filename: file.originalname, note },
     });
 
+    if (result.type === "deliverable" && result.status === "pending") {
+      this.notifications.notifyDocumentUploaded(id);
+      this.logVersionActivity(result, userId, orgId);
+    }
+
+    return result;
+  }
+
+  private logVersionActivity(
+    doc: { id: string; title: string; projectId: string; currentVersion: number },
+    userId: string,
+    orgId: string,
+  ): void {
+    this.activityService
+      .create({
+        type: "document_response",
+        action: "version_uploaded",
+        actorId: userId,
+        targetId: doc.id,
+        targetTitle: `${doc.title} (v${doc.currentVersion})`,
+        projectId: doc.projectId,
+        organizationId: orgId,
+      })
+      .catch((err) => this.logger.warn({ err }, "Failed to log deliverable version activity"));
+  }
+
+  async linkVersion(id: string, orgId: string, userId: string, url: string, note?: string) {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      this.logger.warn({ err }, "Invalid link version URL");
+      throw new BadRequestException("Invalid URL");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new BadRequestException("Only http(s) URLs are allowed");
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe(`SELECT id FROM "document" WHERE id = $1 FOR UPDATE`, id);
+      const doc = await tx.document.findFirst({ where: { id, organizationId: orgId }, include: { file: true } });
+      if (!doc) throw new NotFoundException("Document not found");
+      if (doc.type !== "deliverable") throw new BadRequestException("Only deliverables can be links");
+      if (doc.status === "voided" || doc.status === "expired") {
+        throw new BadRequestException(`Cannot upload new versions to ${doc.status} documents`);
+      }
+
+      await tx.documentVersion.create({
+        data: { documentId: id, fileId: doc.fileId, version: doc.currentVersion, uploadedById: doc.uploadedById, note },
+      });
+      const newFile = await tx.file.create({
+        data: {
+          filename: doc.file.filename,
+          type: "LINK",
+          url: parsed.toString(),
+          projectId: doc.projectId,
+          organizationId: orgId,
+          uploadedById: userId,
+        },
+      });
+      const wasSent: boolean = doc.status !== "draft";
+      if (wasSent) await tx.documentResponse.deleteMany({ where: { documentId: id } });
+
+      return tx.document.update({
+        where: { id },
+        data: {
+          fileId: newFile.id,
+          currentVersion: doc.currentVersion + 1,
+          requestNote: note?.trim() || null,
+          ...(wasSent ? { status: "pending", sentAt: new Date(), lastReminderAt: null } : {}),
+        },
+        include: DOCUMENT_FULL_INCLUDE,
+      });
+    });
+
+    this.auditService.log(id, "version_uploaded", {
+      userId,
+      metadata: { version: result.currentVersion, url: parsed.toString(), note },
+    });
+    if (result.status === "pending") {
+      this.notifications.notifyDocumentUploaded(id);
+      this.logVersionActivity(result, userId, orgId);
+    }
     return result;
   }
 
