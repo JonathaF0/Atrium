@@ -5,9 +5,11 @@ import {
   NotFoundException,
   OnApplicationBootstrap,
 } from "@nestjs/common";
+import * as Sentry from "@sentry/nestjs";
 import { DEFAULT_STATUSES, PROJECT_STATUSES } from "@atrium/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProjectDto, UpdateProjectDto, DuplicateProjectDto } from "./projects.dto";
+import { ContactSyncService } from "../contact-sync/contact-sync.service";
 import { paginationArgs, paginatedResponse } from "../common";
 
 interface ProjectWhereInput {
@@ -36,7 +38,20 @@ const STANDALONE_FILES = {
 export class ProjectsService implements OnApplicationBootstrap {
   private readonly logger: Logger = new Logger(ProjectsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private contactSync: ContactSyncService,
+  ) {}
+
+  private async syncClients(projectId: string, organizationId: string, userIds: string[]): Promise<void> {
+    if (!userIds.length) return;
+    try {
+      await this.contactSync.linkProjectClients(projectId, organizationId, userIds);
+    } catch (err) {
+      Sentry.captureException(err);
+      this.logger.error("Failed to link project contacts", err);
+    }
+  }
 
   async onApplicationBootstrap(): Promise<void> {
     try {
@@ -248,7 +263,7 @@ export class ProjectsService implements OnApplicationBootstrap {
       }
     }
 
-    return this.prisma.project.create({
+    const created = await this.prisma.project.create({
       data: {
         ...rest,
         startDate: startDate ? new Date(startDate) : undefined,
@@ -264,6 +279,8 @@ export class ProjectsService implements OnApplicationBootstrap {
       },
       include: { clients: { select: { userId: true } } },
     });
+    await this.syncClients(created.id, organizationId, clientUserIds ?? []);
+    return created;
   }
 
   async update(id: string, data: UpdateProjectDto, organizationId: string) {
@@ -313,6 +330,7 @@ export class ProjectsService implements OnApplicationBootstrap {
           include: { clients: { select: { userId: true } } },
         }),
       ]);
+      await this.syncClients(id, organizationId, clientUserIds);
       return project;
     }
 
@@ -350,7 +368,7 @@ export class ProjectsService implements OnApplicationBootstrap {
     const includeTasks = dto.includeTasks ?? true;
     const includeClients = dto.includeClients ?? false;
 
-    return this.prisma.$transaction(async (tx) => {
+    const duplicated = await this.prisma.$transaction(async (tx) => {
       // Duplicate = fresh copy semantics:
       // - project status uses the schema default (not_started), not the source's
       // - startDate/endDate are copied but future/past relevance is the user's call
@@ -434,6 +452,15 @@ export class ProjectsService implements OnApplicationBootstrap {
       // + options + labels is sequential and can exceed 5s on larger templates.
       timeout: 15000,
     });
+
+    if (duplicated && includeClients) {
+      await this.syncClients(
+        duplicated.id,
+        organizationId,
+        source.clients.map((c) => c.userId),
+      );
+    }
+    return duplicated;
   }
 
   async remove(id: string, organizationId: string) {

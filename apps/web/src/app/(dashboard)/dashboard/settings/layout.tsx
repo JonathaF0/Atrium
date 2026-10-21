@@ -11,6 +11,7 @@ interface Section {
 const SECTIONS: Section[] = [
   { href: "/dashboard/settings/account", label: "Account" },
   { href: "/dashboard/settings/workspace", label: "Workspace" },
+  { href: "/dashboard/settings/team", label: "Team" },
   { href: "/dashboard/settings/organizations", label: "Organizations" },
   { href: "/dashboard/settings/billing", label: "Billing" },
   { href: "/dashboard/settings/payments", label: "Payments" },
@@ -22,14 +23,17 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
 
   return (
     <div className="space-y-6">
-      <div className="flex gap-1 border-b border-[var(--border)]">
+      {/* Scrolls sideways on a phone instead of pushing the page wider. */}
+      <nav aria-label="Settings" className="flex gap-1 border-b border-[var(--border)] overflow-x-auto">
         {SECTIONS.map((s) => {
           const isActive = pathname === s.href;
           return (
             <Link
               key={s.href}
               href={s.href}
-              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+              aria-current={isActive ? "page" : undefined}
+              ref={isActive ? (el) => el?.scrollIntoView({ block: "nearest", inline: "nearest" }) : undefined}
+              className={`px-4 py-2 text-sm font-medium whitespace-nowrap shrink-0 transition-colors relative ${
                 isActive
                   ? "text-[var(--foreground)]"
                   : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
@@ -42,7 +46,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
             </Link>
           );
         })}
-      </div>
+      </nav>
       {children}
     </div>
   );

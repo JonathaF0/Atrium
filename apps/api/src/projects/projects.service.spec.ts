@@ -60,11 +60,16 @@ const mockPrisma = {
   }),
 };
 
+const mockContactSync = {
+  linkProjectClients: mock(() => Promise.resolve()),
+};
+
 describe("ProjectsService", () => {
   let service: ProjectsService;
 
   beforeEach(() => {
-    service = new ProjectsService(mockPrisma as unknown as PrismaService);
+    service = new ProjectsService(mockPrisma as unknown as PrismaService, mockContactSync as never);
+    mockContactSync.linkProjectClients.mockClear();
     // Reset mocks
     Object.values(mockPrisma.project).forEach((m) => {
       if (typeof m === "function" && "mockClear" in m) {
@@ -181,6 +186,35 @@ describe("ProjectsService", () => {
       },
       include: { clients: { select: { userId: true } } },
     });
+  });
+
+  it("update with clientUserIds links contacts", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(
+      Promise.resolve({ id: "p1", organizationId: "org-1", archivedAt: null }),
+    );
+    mockPrisma.member.count.mockReturnValue(Promise.resolve(1));
+
+    await service.update("p1", { clientUserIds: ["u1"] }, "org-1");
+
+    expect(mockContactSync.linkProjectClients).toHaveBeenCalledWith("p1", "org-1", ["u1"]);
+  });
+
+  it("update still succeeds when contact sync fails", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(
+      Promise.resolve({ id: "p1", organizationId: "org-1", archivedAt: null }),
+    );
+    mockPrisma.member.count.mockReturnValue(Promise.resolve(1));
+    mockContactSync.linkProjectClients.mockReturnValueOnce(Promise.reject(new Error("boom")));
+
+    const result = await service.update("p1", { clientUserIds: ["u1"] }, "org-1");
+
+    expect(result).toBeDefined();
+  });
+
+  it("create links contacts for clientUserIds", async () => {
+    mockPrisma.member.count.mockReturnValue(Promise.resolve(1));
+    await service.create({ name: "X", clientUserIds: ["u1"] }, "org-1");
+    expect(mockContactSync.linkProjectClients).toHaveBeenCalledWith("new-id", "org-1", ["u1"]);
   });
 
   it("create creates a project without clients when clientUserIds is empty", async () => {
@@ -456,6 +490,21 @@ describe("ProjectsService", () => {
           { projectId: "new-3", userId: "u-2" },
         ],
       });
+      expect(mockContactSync.linkProjectClients).toHaveBeenCalledWith("new-3", "org-1", ["u-1", "u-2"]);
+    });
+
+    it("does not link contacts when clients are not copied", async () => {
+      mockPrisma.project.findFirst.mockReturnValue(Promise.resolve(sourceProject));
+      mockPrisma.project.create.mockReturnValue(
+        Promise.resolve({ id: "new-4", name: "NoClients", organizationId: "org-1" }),
+      );
+      mockPrisma.project.findUnique.mockReturnValue(
+        Promise.resolve({ id: "new-4", name: "NoClients", organizationId: "org-1", clients: [] }),
+      );
+
+      await service.duplicate("src-1", { name: "NoClients", includeTasks: false }, "org-1");
+
+      expect(mockContactSync.linkProjectClients).not.toHaveBeenCalled();
     });
 
     it("scopes the source lookup to the provided organizationId", async () => {

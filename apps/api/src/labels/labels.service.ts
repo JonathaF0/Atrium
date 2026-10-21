@@ -7,6 +7,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateLabelDto, UpdateLabelDto, AssignLabelDto } from "./labels.dto";
 import { DEFAULT_LABEL_COLOR } from "@atrium/shared";
+import { ContactSyncService } from "../contact-sync/contact-sync.service";
 
 function isPrismaUniqueViolation(err: unknown): boolean {
   return (
@@ -19,7 +20,10 @@ function isPrismaUniqueViolation(err: unknown): boolean {
 
 @Injectable()
 export class LabelsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private contactSync: ContactSyncService,
+  ) {}
 
   async findAll(orgId: string) {
     return this.prisma.label.findMany({
@@ -116,8 +120,26 @@ export class LabelsService {
             where: { id: dto.entityId, organizationId: orgId },
           });
           if (!member) throw new BadRequestException("Member not found");
-          return await this.prisma.memberLabel.create({
-            data: { memberId: dto.entityId, labelId },
+          // Staff tags live on the member; client tags live on the client's contact.
+          if (member.role !== "member") {
+            return await this.prisma.memberLabel.create({
+              data: { memberId: member.id, labelId },
+            });
+          }
+          const contact = await this.contactSync.ensureForMember(orgId, member.userId);
+          if (!contact) throw new BadRequestException("This client has no contact to tag");
+          return await this.prisma.contactLabel.create({
+            data: { contactId: contact.id, labelId },
+          });
+        }
+        case "contact": {
+          const contact = await this.prisma.contact.findFirst({
+            where: { id: dto.entityId, organizationId: orgId },
+            select: { id: true },
+          });
+          if (!contact) throw new BadRequestException("Contact not found");
+          return await this.prisma.contactLabel.create({
+            data: { contactId: dto.entityId, labelId },
           });
         }
         default:
@@ -174,9 +196,36 @@ export class LabelsService {
           where: { id: dto.entityId, organizationId: orgId },
         });
         if (!member) throw new BadRequestException("Member not found");
-        await this.prisma.memberLabel.deleteMany({
-          where: { memberId: dto.entityId, labelId },
+        // Staff tags are MemberLabel rows. A client's legacy MemberLabel rows are copied to
+        // their contact on boot, so drop any left too or the tag would come back.
+        await this.prisma.memberLabel.deleteMany({ where: { memberId: member.id, labelId } });
+        if (member.role !== "member") break;
+        const contact = await this.prisma.contact.findFirst({
+          where: { organizationId: orgId, userId: member.userId },
+          select: { id: true },
         });
+        if (contact) {
+          await this.prisma.contactLabel.deleteMany({
+            where: { contactId: contact.id, labelId },
+          });
+        }
+        break;
+      }
+      case "contact": {
+        const contact = await this.prisma.contact.findFirst({
+          where: { id: dto.entityId, organizationId: orgId },
+          select: { id: true, userId: true },
+        });
+        if (!contact) throw new BadRequestException("Contact not found");
+        await this.prisma.contactLabel.deleteMany({
+          where: { contactId: dto.entityId, labelId },
+        });
+        if (contact.userId) {
+          await this.prisma.memberLabel.deleteMany({
+            // Only a client's legacy rows; a staff member's own tags stay.
+            where: { labelId, member: { organizationId: orgId, userId: contact.userId, role: "member" } },
+          });
+        }
         break;
       }
       default:

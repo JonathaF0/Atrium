@@ -95,6 +95,8 @@ model Organization {
   updatedAt      DateTime @updatedAt
   metadata       String?
   setupCompleted Boolean  @default(false)
+  // Set once the contacts boot backfill gave pending client invitations a contact.
+  inviteesBackfilledAt DateTime?
 
   members          Member[]
   invitations      Invitation[]
@@ -106,6 +108,9 @@ model Organization {
   mcpGrants        McpGrant[]
   mcpPendingGrants McpPendingGrant[]
   integrations     IntegrationDestination[]
+  contacts         Contact[]
+  companies        Company[]
+  leadSources      LeadSource[]
 
   @@map("organization")
 }
@@ -310,6 +315,7 @@ model Project {
   activities  ActivityLog[]
   labels      ProjectLabel[]
   timeEntries TimeEntry[]
+  contacts    ProjectContact[]
 
   @@index([organizationId])
   @@map("project")
@@ -869,6 +875,7 @@ model Label {
   taskLabels    TaskLabel[]
   fileLabels    FileLabel[]
   memberLabels  MemberLabel[]
+  contactLabels ContactLabel[]
 
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -929,6 +936,148 @@ model MemberLabel {
   @@unique([memberId, labelId])
   @@index([labelId])
   @@map("member_label")
+}
+
+// ─── Contacts (light CRM) ───
+
+model Company {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  website        String?
+  notes          String?
+  annualRevenue  Int? // whole units of currency
+  employeeCount  Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts     Contact[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("company")
+}
+
+model LeadSource {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts     Contact[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("lead_source")
+}
+
+model Contact {
+  id                 String    @id @default(cuid())
+  organizationId     String
+  name               String // display name: "firstName lastName"
+  firstName          String?
+  lastName           String?
+  jobTitle           String?
+  department         String?
+  email              String? // stored lowercased and trimmed
+  phone              String? // mirror of phones[0].number, kept by the service
+  phones             Json      @default("[]") // [{ label, number }]
+  socialLinks        Json      @default("[]") // [url]
+  rating             String? // "hot" | "warm" | "cold"
+  website            String?
+  address            String?
+  description        String? // "About"; null = never set (legacy profile import may fill it), "" = cleared
+  status             String    @default("lead") // "lead" | "client" | "past_client"
+  companyId          String?
+  userId             String? // portal login in this org; plain string, no FK to User
+  leadSourceId       String?
+  referredById       String?
+  followUpAt         DateTime?
+  followUpEveryDays  Int? // null = one-off
+  followUpOwnerId    String? // userId of who set it; receives the reminder
+  followUpNotifiedAt DateTime?
+  profileImportedAt  DateTime? // set once ClientProfile data was copied in by the boot backfill
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company?         @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  leadSource   LeadSource?      @relation(fields: [leadSourceId], references: [id], onDelete: SetNull)
+  referredBy   Contact?         @relation("ContactReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals    Contact[]        @relation("ContactReferrals")
+  notes        ContactNote[]
+  events       ContactEvent[]
+  labels       ContactLabel[]
+  projects     ProjectContact[]
+
+  @@unique([organizationId, email])
+  @@unique([organizationId, userId])
+  @@index([organizationId, followUpAt])
+  @@index([companyId])
+  @@index([leadSourceId])
+  @@index([referredById])
+  @@map("contact")
+}
+
+model ContactNote {
+  id             String   @id @default(cuid())
+  contactId      String
+  organizationId String
+  authorId       String
+  content        String
+  createdAt      DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, createdAt])
+  @@index([organizationId])
+  @@map("contact_note")
+}
+
+model ContactEvent {
+  id             String   @id @default(cuid())
+  contactId      String
+  organizationId String
+  type           String // contact_created | invoice_paid | project_linked | portal_invited | portal_joined
+  detail         String
+  refId          String? // invoice or project id
+  createdAt      DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@index([contactId, createdAt])
+  @@index([organizationId])
+  @@map("contact_event")
+}
+
+model ContactLabel {
+  id        String   @id @default(cuid())
+  contactId String
+  labelId   String
+  createdAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  label   Label   @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, labelId])
+  @@index([labelId])
+  @@map("contact_label")
+}
+
+model ProjectContact {
+  id        String   @id @default(cuid())
+  projectId String
+  contactId String
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, contactId])
+  @@index([contactId])
+  @@map("project_contact")
 }
 
 // ─── Time Tracking ───

@@ -10,9 +10,10 @@ import { PrismaService } from "../prisma/prisma.service";
 import { isAllowedRedirectUri } from "./oauth-redirect";
 import { applyConsentOutcome, guardTokenExchange } from "../mcp-auth/consent-hooks";
 import { revokeCredentialsIfDemoted } from "../common/helpers/member-credentials";
+import { ContactSyncService } from "../contact-sync/contact-sync.service";
 import { MailService } from "../mail/mail.service";
 import { BillingService } from "../billing/billing.service";
-import { DEFAULT_STATUSES, DEFAULT_BRANDING } from "@atrium/shared";
+import { DEFAULT_STATUSES, DEFAULT_BRANDING, DEFAULT_LEAD_SOURCES } from "@atrium/shared";
 import { render } from "@react-email/render";
 import { InvitationEmail, MagicLinkEmail, ResetPasswordEmail, VerifyEmail } from "@atrium/email";
 import { formatInvitationExpiry, INVITATION_EXPIRES_IN_SECONDS } from "../clients/invitations";
@@ -35,6 +36,7 @@ export class AuthService {
     private prisma: PrismaService,
     private mail: MailService,
     private billingService: BillingService,
+    private contactSync: ContactSyncService,
   ) {
     const webUrl = this.config.get("WEB_URL", "http://localhost:3000");
     const apiUrl: string = publicApiUrl(this.config);
@@ -296,12 +298,23 @@ export class AuthService {
                 expiresOn: formatInvitationExpiry(new Date(invitation.expiresAt)),
               }),
             );
-            await this.mail.send(
-              invitation.email,
-              `You've been invited to ${organization.name}`,
-              html,
-              organization.id,
-            );
+            let sent: boolean = false;
+            try {
+              const result = await this.mail.send(
+                invitation.email,
+                `You've been invited to ${organization.name}`,
+                html,
+                organization.id,
+              );
+              sent = result.sent;
+            } finally {
+              // Lets a local tester accept an invite without a working mail provider.
+              if (process.env.NODE_ENV !== "production") {
+                this.logger.log(
+                  `Invitation for ${invitation.email} ${sent ? "emailed" : "NOT emailed"}; accept at ${inviteUrl}`,
+                );
+              }
+            }
           },
           organizationHooks: {
             // The clients page disables inviting at the limit; this makes the API agree.
@@ -312,6 +325,23 @@ export class AuthService {
             // The invite being accepted is still pending and counted, so it is reserved out.
             beforeAcceptInvitation: async ({ invitation }) => {
               await this.assertInviteWithinPlan(invitation.organizationId, invitation.role ?? "member", 1);
+            },
+            afterCreateInvitation: async ({ invitation }) => {
+              try {
+                await this.contactSync.recordInvited(invitation.organizationId, invitation.email, invitation.role);
+              } catch (err) {
+                Sentry.captureException(err);
+                this.logger.error("Failed to record invitation on contact", err);
+              }
+            },
+            afterAcceptInvitation: async ({ invitation, user }) => {
+              if ((invitation.role ?? "member") !== "member") return;
+              try {
+                await this.contactSync.ensureForMember(invitation.organizationId, user.id);
+              } catch (err) {
+                Sentry.captureException(err);
+                this.logger.error("Failed to sync contact after invitation accepted", err);
+              }
             },
             afterCreateOrganization: async ({ organization }) => {
               await this.seedOrganizationDefaults(organization.id);
@@ -324,12 +354,35 @@ export class AuthService {
             },
             // Atrium's own role endpoint revokes in the same transaction
             // (ClientsService.changeRole); this covers Better Auth's route.
-            afterUpdateMemberRole: async ({ member }) => {
+            afterUpdateMemberRole: async ({ member, previousRole }) => {
               try {
                 await revokeCredentialsIfDemoted(this.prisma, member);
               } catch (err) {
                 Sentry.captureException(err);
                 this.logger.error("Failed to revoke credentials after demotion", err);
+              }
+              try {
+                await this.contactSync.syncRoleChange(
+                  member.organizationId,
+                  member.userId,
+                  previousRole,
+                  member.role,
+                );
+              } catch (err) {
+                Sentry.captureException(err);
+                this.logger.error("Failed to sync contact after role change", err);
+              }
+            },
+            // Atrium's own remove endpoint detaches itself (ClientsService.removeMember);
+            // this covers Better Auth's /organization/remove-member. /organization/leave
+            // does not fire this hook in Better Auth 1.4.18.
+            afterRemoveMember: async ({ member }) => {
+              if (member.role !== "member") return;
+              try {
+                await this.contactSync.detachMember(member.organizationId, member.userId);
+              } catch (err) {
+                Sentry.captureException(err);
+                this.logger.error("Failed to detach contact after member removal", err);
               }
             },
           },
@@ -397,6 +450,10 @@ export class AuthService {
       });
       await tx.systemSettings.create({
         data: { organizationId },
+      });
+      await tx.leadSource.createMany({
+        data: DEFAULT_LEAD_SOURCES.map((name) => ({ organizationId, name })),
+        skipDuplicates: true,
       });
     });
   }

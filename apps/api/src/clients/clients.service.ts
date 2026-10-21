@@ -1,19 +1,30 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
 } from "@nestjs/common";
+import * as Sentry from "@sentry/nestjs";
+import type { Member } from "@atrium/database";
+import { ContactSyncService } from "../contact-sync/contact-sync.service";
+import { ContactsService } from "../contacts/contacts.service";
+import type { PortalProfile } from "../contacts/contacts.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthService } from "../auth/auth.service";
 import { UpdateClientProfileDto } from "./client-profile.dto";
+import type { MemberKind } from "./clients.dto";
 import { MCP_ACTOR_ROLES, paginatedResponse, revokeMemberCredentials } from "../common";
 
 @Injectable()
 export class ClientsService {
+  private readonly logger = new Logger(ClientsService.name);
+
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
+    private contactSync: ContactSyncService,
+    private contacts: ContactsService,
   ) {}
 
   async generateResetLink(
@@ -81,6 +92,15 @@ export class ClientsService {
       }),
       this.prisma.member.delete({ where: { id: memberId } }),
     ]);
+
+    if (member.role === "member") {
+      try {
+        await this.contactSync.detachMember(orgId, member.userId);
+      } catch (err) {
+        Sentry.captureException(err);
+        this.logger.error("Failed to detach contact after member removal", err);
+      }
+    }
   }
 
   async changeRole(
@@ -108,19 +128,28 @@ export class ClientsService {
     if (!validRoles.includes(newRole)) {
       throw new BadRequestException("Invalid role");
     }
+    let updated: Member;
     if (MCP_ACTOR_ROLES.includes(newRole)) {
-      return this.prisma.member.update({
+      updated = await this.prisma.member.update({
         where: { id: memberId },
         data: { role: newRole },
       });
+    } else {
+      [updated] = await this.prisma.$transaction([
+        this.prisma.member.update({
+          where: { id: memberId },
+          data: { role: newRole },
+        }),
+        ...revokeMemberCredentials(this.prisma, memberId),
+      ]);
     }
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.member.update({
-        where: { id: memberId },
-        data: { role: newRole },
-      }),
-      ...revokeMemberCredentials(this.prisma, memberId),
-    ]);
+
+    try {
+      await this.contactSync.syncRoleChange(orgId, member.userId, member.role, newRole);
+    } catch (err) {
+      Sentry.captureException(err);
+      this.logger.error("Failed to sync contact after role change", err);
+    }
     return updated;
   }
 
@@ -144,9 +173,10 @@ export class ClientsService {
     });
   }
 
-  async list(orgId: string, page = 1, limit = 20, search?: string) {
+  async list(orgId: string, page = 1, limit = 20, search?: string, kind?: MemberKind) {
     const where = {
       organizationId: orgId,
+      ...(kind === "staff" ? { role: { not: "member" } } : kind === "client" ? { role: "member" } : {}),
       ...(search
         ? {
             user: {
@@ -169,6 +199,7 @@ export class ClientsService {
           hourlyRateCents: true,
           lastSeenAt: true,
           user: { select: { id: true, name: true, email: true } },
+          // Staff tags; a client's tags live on their contact (below).
           labels: { select: { label: { select: { id: true, name: true, color: true } } } },
         },
         orderBy: { createdAt: "asc" },
@@ -178,13 +209,40 @@ export class ClientsService {
       this.prisma.member.count({ where }),
     ]);
 
-    const userIds: string[] = data.map((m) => m.userId);
-    const profiles = await this.prisma.clientProfile.findMany({
-      where: { userId: { in: userIds }, organizationId: orgId },
+    // A client's tags and profile live on their contact; tags keep the staff `labels: { label }[]` shape.
+    const clientUserIds: string[] = data.filter((m) => m.role === "member").map((m) => m.userId);
+    const contacts = await this.prisma.contact.findMany({
+      where: { organizationId: orgId, userId: { in: clientUserIds } },
+      select: {
+        id: true,
+        userId: true,
+        phone: true,
+        address: true,
+        website: true,
+        description: true,
+        company: { select: { name: true } },
+        labels: { select: { label: { select: { id: true, name: true, color: true } } } },
+      },
     });
-    const profileMap = new Map(profiles.map((p) => [p.userId, p]));
+    const byUser = new Map(contacts.map((c) => [c.userId, c]));
 
-    const enriched = data.map((m) => ({ ...m, profile: profileMap.get(m.userId) || null }));
+    const enriched = data.map((m) => {
+      const contact = m.role === "member" ? byUser.get(m.userId) : undefined;
+      return {
+        ...m,
+        labels: m.role === "member" ? (contact?.labels ?? []) : m.labels,
+        contactId: contact?.id ?? null,
+        profile: contact
+          ? {
+              company: contact.company?.name ?? null,
+              phone: contact.phone ?? null,
+              address: contact.address || null,
+              website: contact.website || null,
+              description: contact.description || null,
+            }
+          : null,
+      };
+    });
     return paginatedResponse(enriched, total, page, limit);
   }
 
@@ -200,32 +258,26 @@ export class ClientsService {
     return member;
   }
 
-  async getProfile(userId: string, orgId: string) {
-    const profile = await this.prisma.clientProfile.findUnique({
-      where: { userId_organizationId: { userId, organizationId: orgId } },
-    });
-    return (
-      profile || {
-        userId,
-        organizationId: orgId,
-        company: null,
-        phone: null,
-        address: null,
-        website: null,
-        description: null,
-      }
-    );
+  /**
+   * A portal client's profile is their contact (created if missing). Staff have no contact, so
+   * they get an empty profile.
+   */
+  async getProfile(userId: string, orgId: string): Promise<PortalProfile> {
+    const contact = await this.contactSync.ensureForMember(orgId, userId);
+    if (!contact) return { company: null, phone: null, address: null, website: null, description: null };
+    return this.contacts.portalProfile(contact.id, orgId);
   }
 
-  async updateProfile(
-    userId: string,
-    orgId: string,
-    dto: UpdateClientProfileDto,
-  ) {
-    return this.prisma.clientProfile.upsert({
-      where: { userId_organizationId: { userId, organizationId: orgId } },
-      create: { userId, organizationId: orgId, ...dto },
-      update: dto,
+  async updateProfile(userId: string, orgId: string, dto: UpdateClientProfileDto): Promise<PortalProfile> {
+    const contact = await this.contactSync.ensureForMember(orgId, userId);
+    if (contact) return this.contacts.updatePortalProfile(contact.id, dto, orgId);
+    const member = await this.prisma.member.findFirst({
+      where: { organizationId: orgId, userId },
+      select: { role: true },
     });
+    if (member?.role !== "member") throw new ForbiddenException("Only portal clients have a profile");
+    // A client whose email matches a contact linked to someone else: not their fault.
+    this.logger.warn(`No contact for portal client ${userId} in organization ${orgId}; profile not saved`);
+    throw new ForbiddenException("Your profile can't be loaded right now");
   }
 }

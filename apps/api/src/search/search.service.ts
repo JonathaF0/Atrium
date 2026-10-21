@@ -6,7 +6,9 @@ export class SearchService {
   constructor(private prisma: PrismaService) {}
 
   async search(orgId: string, q: string) {
-    const [projects, tasks, files, members] = await Promise.all([
+    // Portal clients are found as contacts (their contact is linked to their login), so there is
+    // no separate clients group.
+    const [projects, tasks, files, contactRows, companies] = await Promise.all([
       this.prisma.project.findMany({
         where: {
           organizationId: orgId,
@@ -54,42 +56,40 @@ export class SearchService {
         },
         take: 5,
       }),
-      this.prisma.member.findMany({
+      this.prisma.contact.findMany({
         where: {
           organizationId: orgId,
-          role: "member",
-          user: {
-            OR: [
-              { name: { contains: q, mode: "insensitive" } },
-              { email: { contains: q, mode: "insensitive" } },
-            ],
-          },
+          OR: [
+            { name: { contains: q, mode: "insensitive" } },
+            { email: { contains: q, mode: "insensitive" } },
+            { company: { name: { contains: q, mode: "insensitive" } } },
+          ],
         },
         select: {
           id: true,
-          userId: true,
-          user: { select: { id: true, name: true, email: true } },
+          name: true,
+          email: true,
+          company: { select: { name: true } },
         },
+        take: 5,
+      }),
+      this.prisma.company.findMany({
+        where: {
+          organizationId: orgId,
+          name: { contains: q, mode: "insensitive" },
+        },
+        select: { id: true, name: true },
         take: 5,
       }),
     ]);
 
-    const memberUserIds = members.map((m) => m.userId);
-    const clientProfiles =
-      memberUserIds.length > 0
-        ? await this.prisma.clientProfile.findMany({
-            where: { userId: { in: memberUserIds } },
-            select: { userId: true, company: true },
-          })
-        : [];
-
-    const profileByUserId = new Map(clientProfiles.map((p) => [p.userId, p]));
-
-    const clients = members.map((m) => ({
-      ...m,
-      company: profileByUserId.get(m.userId)?.company ?? null,
+    const contacts = contactRows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      company: c.company?.name ?? null,
     }));
 
-    return { projects, tasks, files, clients };
+    return { projects, tasks, files, contacts, companies };
   }
 }

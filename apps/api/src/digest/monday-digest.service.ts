@@ -4,6 +4,7 @@ import { WEEK_MS } from "../common/helpers/local-time";
 
 const MAX_TASKS = 10;
 const MAX_ACTIVITY = 8;
+const MAX_FOLLOW_UPS = 10;
 
 export interface DigestTask {
   title: string;
@@ -24,10 +25,17 @@ export interface MondayDigest {
   activity: DigestActivity[];
   activityTotal: number;
   overdueInvoices: { invoiceNumber: string; dueDate: Date | null; projectId: string | null }[];
+  followUps: { name: string; contactId: string; dueAt: Date; overdue: boolean }[];
+  followUpTotal: number;
   isEmpty: boolean;
 }
 
 /** What an owner/admin should look at as their week starts. */
+/** Follow-ups are calendar dates: compare their UTC date, not the timestamp. */
+function utcDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
 @Injectable()
 export class MondayDigestService {
   constructor(private prisma: PrismaService) {}
@@ -51,7 +59,10 @@ export class MondayDigestService {
       createdAt: { gte: new Date(now.getTime() - WEEK_MS) },
     };
 
-    const [tasks, taskTotal, activity, activityTotal, overdueInvoices] = await Promise.all([
+    // Contacts are shared across the workspace, so follow-ups are org-wide.
+    const followUpWhere = { organizationId, followUpAt: { lte: new Date(now.getTime() + WEEK_MS) } };
+
+    const [tasks, taskTotal, activity, activityTotal, overdueInvoices, followUps, followUpTotal] = await Promise.all([
       this.prisma.task.findMany({
         where: taskWhere,
         select: { title: true, dueDate: true, project: { select: { name: true } } },
@@ -74,6 +85,13 @@ export class MondayDigestService {
         select: { invoiceNumber: true, dueDate: true, projectId: true },
         orderBy: { dueDate: "asc" },
       }),
+      this.prisma.contact.findMany({
+        where: followUpWhere,
+        select: { id: true, name: true, followUpAt: true },
+        orderBy: { followUpAt: "asc" },
+        take: MAX_FOLLOW_UPS,
+      }),
+      this.prisma.contact.count({ where: followUpWhere }),
     ]);
 
     return {
@@ -87,7 +105,13 @@ export class MondayDigestService {
       activity,
       activityTotal,
       overdueInvoices,
-      isEmpty: taskTotal === 0 && activityTotal === 0 && overdueInvoices.length === 0,
+      followUps: followUps.flatMap((c) =>
+        c.followUpAt
+          ? [{ name: c.name, contactId: c.id, dueAt: c.followUpAt, overdue: utcDay(c.followUpAt) < utcDay(now) }]
+          : [],
+      ),
+      followUpTotal,
+      isEmpty: taskTotal === 0 && activityTotal === 0 && overdueInvoices.length === 0 && followUpTotal === 0,
     };
   }
 }

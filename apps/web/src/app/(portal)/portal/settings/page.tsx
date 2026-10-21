@@ -4,12 +4,13 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/components/toast";
 
+/** Stored on the client's contact in the workspace; null when not set. */
 interface ClientProfile {
-  company?: string;
-  phone?: string;
-  address?: string;
-  website?: string;
-  description?: string;
+  company?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  website?: string | null;
+  description?: string | null;
 }
 
 export default function PortalSettingsPage() {
@@ -112,9 +113,17 @@ export default function PortalSettingsPage() {
   const handleUpdateClientProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      // Only the five profile fields: the API rejects anything else.
+      const { company, phone, address, website, description } = profile;
       await apiFetch("/clients/me/profile", {
         method: "PUT",
-        body: JSON.stringify(profile),
+        body: JSON.stringify({
+          company: company ?? "",
+          phone: phone ?? "",
+          address: address ?? "",
+          website: website ?? "",
+          description: description ?? "",
+        }),
       });
       success("Profile updated");
     } catch (err) {
@@ -213,10 +222,11 @@ export default function PortalSettingsPage() {
         ) : (
           <form onSubmit={handleUpdateClientProfile} className="space-y-3">
             <div>
-              <label className="text-sm text-[var(--muted-foreground)]">
+              <label htmlFor="profile-company" className="text-sm text-[var(--muted-foreground)]">
                 Company
               </label>
               <input
+                id="profile-company"
                 type="text"
                 value={profile.company || ""}
                 onChange={(e) => setProfile({ ...profile, company: e.target.value })}
@@ -224,10 +234,11 @@ export default function PortalSettingsPage() {
               />
             </div>
             <div>
-              <label className="text-sm text-[var(--muted-foreground)]">
+              <label htmlFor="profile-phone" className="text-sm text-[var(--muted-foreground)]">
                 Phone
               </label>
               <input
+                id="profile-phone"
                 type="text"
                 value={profile.phone || ""}
                 onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
@@ -235,10 +246,11 @@ export default function PortalSettingsPage() {
               />
             </div>
             <div>
-              <label className="text-sm text-[var(--muted-foreground)]">
+              <label htmlFor="profile-address" className="text-sm text-[var(--muted-foreground)]">
                 Address
               </label>
               <input
+                id="profile-address"
                 type="text"
                 value={profile.address || ""}
                 onChange={(e) => setProfile({ ...profile, address: e.target.value })}
@@ -246,10 +258,11 @@ export default function PortalSettingsPage() {
               />
             </div>
             <div>
-              <label className="text-sm text-[var(--muted-foreground)]">
+              <label htmlFor="profile-website" className="text-sm text-[var(--muted-foreground)]">
                 Website
               </label>
               <input
+                id="profile-website"
                 type="text"
                 value={profile.website || ""}
                 onChange={(e) => setProfile({ ...profile, website: e.target.value })}
@@ -257,10 +270,11 @@ export default function PortalSettingsPage() {
               />
             </div>
             <div>
-              <label className="text-sm text-[var(--muted-foreground)]">
+              <label htmlFor="profile-description" className="text-sm text-[var(--muted-foreground)]">
                 Description
               </label>
               <textarea
+                id="profile-description"
                 value={profile.description || ""}
                 onChange={(e) => setProfile({ ...profile, description: e.target.value })}
                 rows={3}
