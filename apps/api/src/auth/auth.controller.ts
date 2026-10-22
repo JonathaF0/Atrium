@@ -1,9 +1,12 @@
-import { All, Controller, Logger, Req, Res } from "@nestjs/common";
+import { All, Controller, ForbiddenException, Logger, Req, Res } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { ROLES } from "@atrium/shared";
 import { AuthService } from "./auth.service";
 import { Public } from "../common";
+import type { AuthenticatedRequest } from "../common";
 import type { Request, Response } from "express";
 import { publicApiUrl } from "../common/helpers/public-api-url";
+import { isStaffOnlyOrgRoute, parseOriginalUrl } from "./staff-only-org-routes";
 
 /**
  * Request headers that must not be forwarded: the proxy re-serializes the
@@ -34,6 +37,28 @@ function encodeForm(body: Record<string, unknown> | undefined): string {
   return params.toString();
 }
 
+const STAFF_ROLES: ReadonlySet<string> = new Set([ROLES.OWNER, ROLES.ADMIN]);
+
+/**
+ * Refuses staff-only organization routes unless the caller is owner/admin of
+ * the active workspace, and refuses them naming any other workspace: the role
+ * SessionMiddleware resolved belongs to the active one only.
+ */
+function assertMayReadOrg(req: Request): void {
+  const url: URL = parseOriginalUrl(req.originalUrl);
+  if (!isStaffOnlyOrgRoute(url)) return;
+
+  const { organization, member } = req as Partial<Pick<AuthenticatedRequest, "organization" | "member">>;
+  if (!organization || !member || !STAFF_ROLES.has(member.role)) {
+    throw new ForbiddenException("Insufficient permissions");
+  }
+  const orgId: string | null = url.searchParams.get("organizationId");
+  const orgSlug: string | null = url.searchParams.get("organizationSlug");
+  if ((orgId && orgId !== organization.id) || (orgSlug && orgSlug !== organization.slug)) {
+    throw new ForbiddenException("Insufficient permissions");
+  }
+}
+
 // Better Auth authenticates its own routes (sign-in lives here), so this proxy
 // is deliberately outside AuthGuard.
 @Controller("auth")
@@ -51,6 +76,7 @@ export class AuthController {
 
   @All("*path")
   async handleAuth(@Req() req: Request, @Res() res: Response) {
+    assertMayReadOrg(req);
     const url = `${this.publicOrigin}${req.originalUrl}`;
 
     const headers = new Headers();

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
-import { resetPlanState } from "@/lib/plan-features";
+import { resetWorkspaceCaches } from "@/lib/workspace-caches";
 
 export type SwitchableOrg = {
   id: string;
@@ -77,7 +77,7 @@ export function OrgSwitcher({
       });
       if (!res.ok) throw new Error(`set-active failed (${res.status})`);
       setOpen(false);
-      resetPlanState();
+      resetWorkspaceCaches();
       router.replace("/dashboard");
       router.refresh();
     } catch (err) {
@@ -93,7 +93,7 @@ export function OrgSwitcher({
       {!hideLogo && (
         /* eslint-disable-next-line @next/next/no-img-element */
         <img
-          src={logoSrc || "/icon.png"}
+          src={logoSrc || "/icon-64.png"}
           alt=""
           className="h-7 w-7 object-contain shrink-0"
         />

@@ -93,6 +93,67 @@ describe("ContactRevenueService", () => {
     expect((await revenue.forContact(d.contactId, d.orgId, new Date())).paidCents).toBe(700);
   });
 
+  it("sums several line items once per invoice and prefers a partial paidAmount", async () => {
+    const d = await seed();
+    const company = await prisma.company.create({ data: { organizationId: d.orgId, name: "Co" } });
+    await prisma.contact.update({ where: { id: d.contactId }, data: { companyId: company.id } });
+    // A second contact on the same project fans the join out; totals must not double.
+    const second = await prisma.contact.create({
+      data: { organizationId: d.orgId, name: "B", email: `b-${d.s}@x.com`, companyId: company.id },
+    });
+    await prisma.projectContact.create({ data: { projectId: d.projectId, contactId: second.id } });
+    const items = {
+      create: [
+        { description: "a", quantity: 3, unitPrice: 1000 },
+        { description: "b", quantity: 1, unitPrice: 250 },
+        { description: "c", quantity: 2, unitPrice: 125 },
+      ],
+    };
+    // Total 3500, paid 2000 of it.
+    await prisma.invoice.create({
+      data: {
+        organizationId: d.orgId,
+        projectId: d.projectId,
+        invoiceNumber: `INV-${d.s}-partial`,
+        status: "paid",
+        paidAt: new Date(),
+        paidAmount: 2000,
+        lineItems: items,
+      },
+    });
+    // Total 3500, fully paid.
+    await prisma.invoice.create({
+      data: {
+        organizationId: d.orgId,
+        projectId: d.projectId,
+        invoiceNumber: `INV-${d.s}-full`,
+        status: "paid",
+        paidAt: new Date(),
+        lineItems: items,
+      },
+    });
+    // Total 3500 outstanding.
+    await prisma.invoice.create({
+      data: {
+        organizationId: d.orgId,
+        projectId: d.projectId,
+        invoiceNumber: `INV-${d.s}-sent`,
+        status: "sent",
+        lineItems: items,
+      },
+    });
+
+    const r = await revenue.forContact(d.contactId, d.orgId, new Date());
+    expect(r.paidCents).toBe(5500);
+    expect(r.outstandingCents).toBe(3500);
+    expect((await revenue.forCompany(company.id, d.orgId, new Date())).paidCents).toBe(5500);
+    const totals = await revenue.paidTotals(null, d.orgId);
+    expect(totals.get(d.contactId)).toBe(5500);
+    expect(totals.get(second.id)).toBe(5500);
+    expect((await revenue.paidTotals([second.id], d.orgId)).get(second.id)).toBe(5500);
+    expect((await revenue.paidTotalsForCompanies(null, d.orgId)).get(company.id)).toBe(5500);
+  });
+
   it("monthly has 12 buckets and groups by paidAt month", async () => {
     const d = await seed();
     const now = new Date(Date.UTC(2026, 9, 20));
@@ -144,6 +205,46 @@ describe("ContactRevenueService", () => {
     expect([...all.entries()]).toEqual([[d.contactId, 7000]]);
     const allCompanies = await revenue.paidTotalsForCompanies(null, d.orgId);
     expect([...allCompanies.entries()]).toEqual([[company.id, 7000]]);
+  });
+
+  it("totals for more ids than Postgres allows bind parameters (a large export) still work", async () => {
+    const d = await seed();
+    await uploaded(d, "paid", 7000, { paidAt: new Date() });
+    const ids: string[] = [d.contactId, ...Array.from({ length: 40_000 }, (_, i) => `missing-${i}`)];
+
+    expect([...(await revenue.paidTotals(ids, d.orgId)).entries()]).toEqual([[d.contactId, 7000]]);
+    expect((await revenue.paidTotalsForCompanies(ids, d.orgId)).size).toBe(0);
+  });
+
+  it("an ended link counts invoices paid until it ended, and nothing outstanding", async () => {
+    const d = await seed();
+    const day = 24 * 60 * 60 * 1000;
+    const company = await prisma.company.create({ data: { organizationId: d.orgId, name: "Co" } });
+    await prisma.contact.update({ where: { id: d.contactId }, data: { companyId: company.id } });
+    await prisma.projectContact.updateMany({
+      where: { projectId: d.projectId, contactId: d.contactId },
+      data: { endedAt: new Date(Date.now() - day) },
+    });
+    const current = await prisma.contact.create({
+      data: { organizationId: d.orgId, name: "B", email: `b-${d.s}@x.com`, companyId: company.id },
+    });
+    await prisma.projectContact.create({ data: { projectId: d.projectId, contactId: current.id } });
+    await uploaded(d, "paid", 1000, { paidAt: new Date(Date.now() - 2 * day) });
+    await uploaded(d, "paid", 500, { paidAt: new Date() });
+    await uploaded(d, "sent", 200);
+
+    const ended = await revenue.forContact(d.contactId, d.orgId, new Date());
+    expect([ended.paidCents, ended.outstandingCents]).toEqual([1000, 0]);
+    const open = await revenue.forContact(current.id, d.orgId, new Date());
+    expect([open.paidCents, open.outstandingCents]).toEqual([1500, 200]);
+
+    for (const ids of [[d.contactId, current.id], null]) {
+      const totals = await revenue.paidTotals(ids, d.orgId);
+      expect([totals.get(d.contactId), totals.get(current.id)]).toEqual([1000, 1500]);
+    }
+    const co = await revenue.forCompany(company.id, d.orgId, new Date());
+    expect([co.paidCents, co.outstandingCents]).toEqual([1500, 200]);
+    expect((await revenue.paidTotalsForCompanies(null, d.orgId)).get(company.id)).toBe(1500);
   });
 
   it("invoices without a project are not counted", async () => {

@@ -27,6 +27,7 @@ const mockPrisma = {
     deleteMany: mock(() => Promise.resolve({ count: 1 })),
   },
   projectClient: {
+    findMany: mock(() => Promise.resolve([] as { userId: string }[])),
     deleteMany: mock(() => Promise.resolve({ count: 0 })),
     createMany: mock(() => Promise.resolve({ count: 0 })),
   },
@@ -35,9 +36,7 @@ const mockPrisma = {
   },
   task: {
     groupBy: mock(() => Promise.resolve([])),
-    create: mock((args: PrismaArgs) =>
-      Promise.resolve({ id: `task-${Math.random().toString(36).slice(2, 8)}`, ...args.data }),
-    ),
+    createMany: mock(() => Promise.resolve({ count: 0 })),
   },
   taskLabel: {
     createMany: mock(() => Promise.resolve({ count: 0 })),
@@ -52,6 +51,7 @@ const mockPrisma = {
   member: {
     count: mock(() => Promise.resolve(2)),
   },
+  $queryRaw: mock(() => Promise.resolve([] as unknown[])),
   $transaction: mock((arg: unknown) => {
     if (typeof arg === "function") {
       return (arg as (tx: typeof mockPrisma) => Promise<unknown>)(mockPrisma);
@@ -62,6 +62,7 @@ const mockPrisma = {
 
 const mockContactSync = {
   linkProjectClients: mock(() => Promise.resolve()),
+  endProjectClients: mock(() => Promise.resolve()),
 };
 
 describe("ProjectsService", () => {
@@ -70,6 +71,7 @@ describe("ProjectsService", () => {
   beforeEach(() => {
     service = new ProjectsService(mockPrisma as unknown as PrismaService, mockContactSync as never);
     mockContactSync.linkProjectClients.mockClear();
+    mockContactSync.endProjectClients.mockClear();
     // Reset mocks
     Object.values(mockPrisma.project).forEach((m) => {
       if (typeof m === "function" && "mockClear" in m) {
@@ -79,10 +81,11 @@ describe("ProjectsService", () => {
     mockPrisma.projectClient.deleteMany.mockClear();
     mockPrisma.projectClient.createMany.mockClear();
     mockPrisma.projectLabel.createMany.mockClear();
-    mockPrisma.task.create.mockClear();
+    mockPrisma.task.createMany.mockClear();
     mockPrisma.taskLabel.createMany.mockClear();
     mockPrisma.decisionOption.createMany.mockClear();
     mockPrisma.$transaction.mockClear();
+    mockPrisma.$queryRaw.mockClear();
   });
 
   it("findAll returns projects for organization", async () => {
@@ -197,6 +200,33 @@ describe("ProjectsService", () => {
     await service.update("p1", { clientUserIds: ["u1"] }, "org-1");
 
     expect(mockContactSync.linkProjectClients).toHaveBeenCalledWith("p1", "org-1", ["u1"]);
+  });
+
+  it("update ends the contact links of clients taken off the project", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(
+      Promise.resolve({ id: "p1", organizationId: "org-1", archivedAt: null }),
+    );
+    mockPrisma.member.count.mockReturnValue(Promise.resolve(1));
+    mockPrisma.projectClient.findMany.mockReturnValueOnce(Promise.resolve([{ userId: "u1" }, { userId: "u2" }]));
+
+    await service.update("p1", { clientUserIds: ["u1"] }, "org-1");
+
+    // Inside the edit's transaction, after locking the project, so the client list can't be stale.
+    expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(mockContactSync.endProjectClients).toHaveBeenCalledWith("p1", "org-1", ["u2"], mockPrisma);
+    expect(mockContactSync.linkProjectClients).toHaveBeenCalledWith("p1", "org-1", ["u1"]);
+  });
+
+  it("update with no clients left ends every previous client's link", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(
+      Promise.resolve({ id: "p1", organizationId: "org-1", archivedAt: null }),
+    );
+    mockPrisma.projectClient.findMany.mockReturnValueOnce(Promise.resolve([{ userId: "u1" }]));
+
+    await service.update("p1", { clientUserIds: [] }, "org-1");
+
+    expect(mockContactSync.endProjectClients).toHaveBeenCalledWith("p1", "org-1", ["u1"], mockPrisma);
+    expect(mockContactSync.linkProjectClients).not.toHaveBeenCalled();
   });
 
   it("update still succeeds when contact sync fails", async () => {
@@ -427,9 +457,10 @@ describe("ProjectsService", () => {
       expect(mockPrisma.projectClient.createMany).not.toHaveBeenCalled();
 
       // Tasks copied with status/assignment state reset
-      expect(mockPrisma.task.create).toHaveBeenCalledTimes(2);
-      const taskCalls = mockPrisma.task.create.mock.calls;
-      const firstTaskData = (taskCalls[0][0] as PrismaArgs).data as Record<string, unknown>;
+      expect(mockPrisma.task.createMany).toHaveBeenCalledTimes(1);
+      const taskRows = (mockPrisma.task.createMany.mock.calls[0][0] as PrismaArgs).data as Array<Record<string, unknown>>;
+      expect(taskRows.length).toBe(2);
+      const firstTaskData = taskRows[0];
       expect(firstTaskData.status).toBe("open");
       expect(firstTaskData.closedAt).toBe(null);
       expect(firstTaskData.dueDate).toBe(null);
@@ -439,11 +470,17 @@ describe("ProjectsService", () => {
       expect(firstTaskData.projectId).toBe("new-1");
       expect(firstTaskData.organizationId).toBe("org-1");
 
+      // Pre-generated ids tie options and labels to the right tasks
+      const secondId = taskRows[1].id as string;
+      const firstId = taskRows[0].id as string;
+      expect(firstId).not.toBe(secondId);
+
       // Decision options copied for the second task
       expect(mockPrisma.decisionOption.createMany).toHaveBeenCalledTimes(1);
       const optCall = mockPrisma.decisionOption.createMany.mock.calls[0][0] as PrismaArgs;
       const optData = optCall.data as Array<Record<string, unknown>>;
       expect(optData.map((o) => o.label)).toEqual(["Option A", "Option B"]);
+      expect(optData.every((o) => o.taskId === secondId)).toBe(true);
 
       // Task label copied for the first task only
       expect(mockPrisma.taskLabel.createMany).toHaveBeenCalledTimes(1);
@@ -462,7 +499,7 @@ describe("ProjectsService", () => {
 
       await service.duplicate("src-1", { name: "NoTasks", includeTasks: false }, "org-1");
 
-      expect(mockPrisma.task.create).not.toHaveBeenCalled();
+      expect(mockPrisma.task.createMany).not.toHaveBeenCalled();
       expect(mockPrisma.decisionOption.createMany).not.toHaveBeenCalled();
       expect(mockPrisma.taskLabel.createMany).not.toHaveBeenCalled();
       // Labels on the project are still copied

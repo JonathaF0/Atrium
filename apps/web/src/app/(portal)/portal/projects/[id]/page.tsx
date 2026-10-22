@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
+import { useSession } from "@/lib/session-context";
+import { useCachedApi } from "@/lib/cached";
 import { formatBytes, formatRelativeTime } from "@/lib/utils";
 import { ProjectDetailSkeleton } from "@/components/skeletons";
 import { Pagination } from "@/components/pagination";
@@ -204,7 +206,7 @@ export default function PortalProjectDetailPage() {
   const searchParams = useSearchParams();
   const toast = useToast();
   const [project, setProject] = useState<Project | null>(null);
-  const [statuses, setStatuses] = useState<ProjectStatus[]>([]);
+  const statuses: ProjectStatus[] = useCachedApi<ProjectStatus[]>("/projects/statuses") ?? [];
   const [updates, setUpdates] = useState<TimelineEntry[]>([]);
   const [updatesPage, setUpdatesPage] = useState(1);
   const [updatesTotalPages, setUpdatesTotalPages] = useState(1);
@@ -250,8 +252,8 @@ export default function PortalProjectDetailPage() {
   const [newRequestTitle, setNewRequestTitle] = useState("");
   const [newRequestDesc, setNewRequestDesc] = useState("");
   const [postingRequest, setPostingRequest] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [sessionLoaded, setSessionLoaded] = useState(false);
+  const { userId } = useSession();
+  const currentUserId: string | null = userId || null;
   const [showCompletedTasks, setShowCompletedTasks] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -508,21 +510,8 @@ export default function PortalProjectDetailPage() {
   };
 
   useEffect(() => {
-    apiFetch<{ user: { id: string } }>("/auth/get-session")
-      .then((s) => setCurrentUserId(s.user.id))
-      .catch((err) => {
-        console.error(err);
-        toast.error("Could not load your session. Some actions may be unavailable.");
-      })
-      .finally(() => setSessionLoaded(true));
-  }, [toast]);
-
-  useEffect(() => {
     loadProject();
     loadDocuments();
-    apiFetch<ProjectStatus[]>("/projects/statuses")
-      .then(setStatuses)
-      .catch(console.error);
   }, [loadProject, loadDocuments]);
 
   useEffect(() => {
@@ -870,7 +859,6 @@ export default function PortalProjectDetailPage() {
                   ? `${API_URL}/api/files/${entry.fileId}/download`
                   : entry.attachmentUrl || `${API_URL}/api/updates/${entry.id}/attachment`;
                 const isOwnUpdate =
-                  sessionLoaded &&
                   currentUserId !== null &&
                   entry.author?.id === currentUserId;
                 const isEditing = editingId === entry.id;
@@ -957,7 +945,9 @@ export default function PortalProjectDetailPage() {
                       <img
                         src={attachmentSrc}
                         alt=""
-                        className="mt-3 max-w-full max-h-80 rounded-lg border border-[var(--border)]"
+                        loading="lazy"
+                        decoding="async"
+                        className="mt-3 max-w-full max-h-80 min-h-32 rounded-lg border border-[var(--border)] object-contain"
                       />
                     )}
                     {entry.hasAttachment && !isImage && (
@@ -1136,7 +1126,7 @@ export default function PortalProjectDetailPage() {
                 }
 
                 // Checkbox / request task — clickable row opens detail modal
-                const isOwnRequest = sessionLoaded && currentUserId !== null && task.requestedById === currentUserId;
+                const isOwnRequest = currentUserId !== null && task.requestedById === currentUserId;
 
                 return (
                   <div

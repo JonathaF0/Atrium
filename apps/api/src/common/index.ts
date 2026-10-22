@@ -13,6 +13,7 @@ export { PlanGuard } from "./guards/plan.guard";
 export { AllExceptionsFilter } from "./filters/http-exception.filter";
 export { PaginationQueryDto } from "./dto/pagination.dto";
 export { paginationArgs, paginatedResponse } from "./helpers/paginate";
+export type { Paginated } from "./helpers/paginate";
 export { sanitizeFilename, contentDisposition } from "./utils/sanitize";
 export { toCsv } from "./utils/csv";
 export type { CsvColumn } from "./utils/csv";
@@ -22,6 +23,7 @@ export { isPublicOAuthPath } from "./helpers/public-oauth-cors";
 export { isMcpPath } from "./helpers/mcp-path";
 export { bearerToken } from "./helpers/bearer-token";
 export { MCP_ACTOR_ROLES } from "./helpers/mcp-actor-roles";
+export { ORG_MEMBER_FIELDS } from "./helpers/org-member-fields";
 export { revokeCredentialsIfDemoted, revokeMemberCredentials } from "./helpers/member-credentials";
 export { BLOCKED_EXTENSIONS } from "./utils/blocked-extensions";
 export type {

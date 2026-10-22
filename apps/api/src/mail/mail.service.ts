@@ -13,8 +13,29 @@ interface SmtpConfig {
   secure: boolean;
 }
 
+const MAX_CONCURRENT_SENDS = 2;
+
+/** Runs at most `max` tasks at once; a finished task hands its slot straight to the next waiter. */
+function createLimiter(max: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(task: () => Promise<T>): Promise<T> => {
+    if (active < max) active++;
+    else await new Promise<void>((resolve) => waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+
 @Injectable()
 export class MailService {
+  private static sendTimeoutMs = 30_000;
+  private readonly limitSend = createLimiter(MAX_CONCURRENT_SENDS);
   private resend: Resend | null;
   private from: string;
   private static readonly SMTP_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -53,7 +74,41 @@ export class MailService {
     return transporter;
   }
 
-  async send(
+  /** Sends are capped at MAX_CONCURRENT_SENDS at a time so a burst stays under provider rate limits. */
+  send(
+    to: string,
+    subject: string,
+    html: string,
+    organizationId?: string,
+  ): Promise<{ sent: boolean; viaOrgConfig: boolean }> {
+    return this.limitSend(() => this.deliverWithTimeout(to, subject, html, organizationId));
+  }
+
+  /**
+   * A hung provider call must not hold a send slot forever: give up on it and free the slot.
+   * The abandoned send may still complete, so a timeout means "unknown"; callers must not retry on it.
+   */
+  private async deliverWithTimeout(
+    to: string,
+    subject: string,
+    html: string,
+    organizationId?: string,
+  ): Promise<{ sent: boolean; viaOrgConfig: boolean }> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<{ sent: boolean; viaOrgConfig: boolean }>((resolve) => {
+      timer = setTimeout(() => {
+        this.logger.error({ to, subject }, `Email send timed out after ${MailService.sendTimeoutMs} ms; giving up`);
+        resolve({ sent: false, viaOrgConfig: false });
+      }, MailService.sendTimeoutMs);
+    });
+    try {
+      return await Promise.race([this.deliver(to, subject, html, organizationId), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async deliver(
     to: string,
     subject: string,
     html: string,

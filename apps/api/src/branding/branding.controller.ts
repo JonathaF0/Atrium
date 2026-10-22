@@ -22,7 +22,9 @@ import { AuthGuard, RolesGuard, Roles, CurrentOrg, Public } from "../common";
 import type { StorageProvider } from "../files/storage/storage.interface";
 import { STORAGE_PROVIDER } from "../files/storage/storage.interface";
 import { randomUUID } from "crypto";
+import { Readable } from "stream";
 import { BillingService } from "../billing/billing.service";
+import { logoCacheControl } from "../common/helpers/http-cache";
 
 const ALLOWED_IMAGE_TYPES = new Set([
   "image/png",
@@ -94,7 +96,7 @@ export class BrandingController {
     const ext = MIME_TO_EXT[file.mimetype] || ".png";
     const storageKey = `branding/${orgId}/logo-${randomUUID()}${ext}`;
 
-    await this.storage.upload(storageKey, file.buffer, file.mimetype);
+    await this.storage.upload(storageKey, Readable.from(file.buffer), file.buffer.length, file.mimetype);
 
     const branding = await this.brandingService.update(orgId, {
       logoKey: storageKey,
@@ -150,6 +152,7 @@ export class BrandingController {
   @Get("logo/:orgId")
   async serveLogo(
     @Param("orgId") orgId: string,
+    @Query("k") key: string | undefined,
     @Res() res: Response,
   ) {
     const branding = await this.brandingService.findByOrgOrNull(orgId);
@@ -161,7 +164,7 @@ export class BrandingController {
 
     const { body, contentType } = await this.storage.download(branding.logoKey);
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "public, max-age=60");
+    res.setHeader("Cache-Control", logoCacheControl(key, branding.logoKey));
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     body.pipe(res);
   }

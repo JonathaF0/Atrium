@@ -3,13 +3,14 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import Link from "next/link";
 import { SignOutButton } from "./sign-out-button";
 import { getSession } from "@/lib/auth";
-import { NotificationBell } from "@/components/notification-bell";
+import { NotificationBell, NotificationProvider } from "@/components/notification-bell";
 import { DynamicFavicon } from "@/components/dynamic-favicon";
 import { PreviewModeProvider } from "@/lib/preview-mode";
 import { PreviewBanner } from "@/components/preview-banner";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { serverFetch } from "@/lib/server-api";
 import { logoSrc as buildLogoSrc } from "@/lib/logo-src";
+import { SessionProvider } from "@/lib/session-context";
 
 async function getBranding() {
   try {
@@ -24,12 +25,13 @@ async function getBranding() {
   }
 }
 
-async function getOrgName() {
+async function getOrg(): Promise<{ id: string; name: string; role: string } | null> {
   try {
-    const res: Response = await serverFetch("/api/auth/organization/get-full-organization");
+    const res: Response = await serverFetch("/api/organization/current");
     if (!res.ok) return null;
-    const org = await res.json();
-    return org?.name || null;
+    const org: { id?: string; name?: string; role?: string } = await res.json();
+    if (!org?.id) return null;
+    return { id: org.id, name: org.name ?? "", role: org.role ?? "" };
   } catch (err) {
     // cookies() throws a control-flow signal during static render; let it through.
     unstable_rethrow(err);
@@ -43,19 +45,27 @@ export default async function PortalLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [session, branding, orgName] = await Promise.all([
+  const [session, branding, org] = await Promise.all([
     getSession(),
     getBranding(),
-    getOrgName(),
+    getOrg(),
   ]);
   if (!session) {
     redirect("/login");
   }
 
+  const orgName: string | null = org?.name || null;
   const logoSrc: string | null = buildLogoSrc(branding, process.env.NEXT_PUBLIC_API_URL || "");
 
   return (
     <Suspense fallback={null}>
+      <SessionProvider
+        userId={session.user?.id ?? ""}
+        userName={session.user?.name ?? ""}
+        role={org?.role ?? ""}
+        orgId={org?.id ?? ""}
+      >
+      <NotificationProvider>
       <PreviewModeProvider>
         <div
           style={
@@ -64,12 +74,12 @@ export default async function PortalLayout({
             } as React.CSSProperties
           }
         >
-          <DynamicFavicon href={logoSrc || "/icon.png"} />
+          <DynamicFavicon href={logoSrc || "/icon-64.png"} />
           <PreviewBanner />
           <header className="border-b border-[var(--border)] px-4 sm:px-6 py-4 flex items-center gap-2 sm:gap-3">
             {!branding?.hideLogo && (
               /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={logoSrc || "/icon.png"} alt="Logo" className="h-8 w-8 object-contain shrink-0" />
+              <img src={logoSrc || "/icon-64.png"} alt="Logo" className="h-8 w-8 object-contain shrink-0" />
             )}
             <span className="font-semibold flex-1 min-w-0 truncate">{orgName || "Atrium"}</span>
             <Link
@@ -103,6 +113,8 @@ export default async function PortalLayout({
           )}
         </div>
       </PreviewModeProvider>
+      </NotificationProvider>
+      </SessionProvider>
     </Suspense>
   );
 }

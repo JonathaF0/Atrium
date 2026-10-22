@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { UserPlus, Copy, Check, Trash2, UsersRound, Sparkles, ExternalLink, KeyRound } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { useSession } from "@/lib/session-context";
 import { useConfirm } from "@/components/confirm-modal";
 import { useToast } from "@/components/toast";
 import { ClientItemSkeleton } from "@/components/skeletons";
@@ -14,6 +15,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { useAppConfig } from "@/lib/app-config";
 import { ResetLinkModal, usePasswordReset } from "@/components/password-reset-link";
 import { PendingInvitationRow, type Invitation } from "./pending-invitation-row";
+import { loadSubscription, useCachedApi } from "@/lib/cached";
 
 interface LabelRecord {
   id: string;
@@ -57,8 +59,7 @@ export default function TeamPage(): React.ReactElement {
   const [members, setMembers] = useState<MemberRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
-  const [currentUserId, setCurrentUserId] = useState<string>("");
-  const [currentRole, setCurrentRole] = useState<string>("");
+  const { userId: currentUserId, role: currentRole } = useSession();
   const [copied, setCopied] = useState<string>("");
 
   const [email, setEmail] = useState<string>("");
@@ -67,17 +68,7 @@ export default function TeamPage(): React.ReactElement {
   const [inviteLink, setInviteLink] = useState<string>("");
   const [inviting, setInviting] = useState<boolean>(false);
   const [resendingId, setResendingId] = useState<string>("");
-  const [orgLabels, setOrgLabels] = useState<LabelRecord[]>([]);
-
-  useEffect(() => {
-    apiFetch<{ user: { id: string } }>("/auth/get-session")
-      .then((session) => setCurrentUserId(session.user.id))
-      .catch(console.error);
-    apiFetch<{ role: string }>("/auth/organization/get-active-member")
-      .then((member) => setCurrentRole(member.role))
-      .catch(console.error);
-    apiFetch<LabelRecord[]>("/labels").then(setOrgLabels).catch(console.error);
-  }, []);
+  const orgLabels: LabelRecord[] = useCachedApi<LabelRecord[]>("/labels") ?? [];
 
   const loadMembers = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -112,13 +103,10 @@ export default function TeamPage(): React.ReactElement {
 
   const loadLimit = useCallback((): void => {
     if (!config?.billingEnabled) return;
-    apiFetch<{ subscription: { plan: { maxMembers: number } } | null; usage: { members: number } }>(
-      "/billing/subscription",
-    )
-      .then(({ subscription, usage }) => {
-        if (subscription?.plan) setMemberLimit({ max: subscription.plan.maxMembers, used: usage.members });
-      })
-      .catch((err: unknown) => console.error(err));
+    loadSubscription().then((res) => {
+      const plan = res?.subscription?.plan;
+      if (res && plan) setMemberLimit({ max: plan.maxMembers, used: res.usage.members });
+    });
   }, [config?.billingEnabled]);
 
   useEffect(() => {
@@ -426,7 +414,6 @@ export default function TeamPage(): React.ReactElement {
                           labels={orgLabels}
                           assigned={(member.labels ?? []).map((l) => l.label.id)}
                           onToggle={(labelId) => handleToggleMemberLabel(member, labelId)}
-                          onLabelsChange={setOrgLabels}
                         />
                       )}
                     </div>

@@ -194,6 +194,45 @@ describe("SettingsService", () => {
     expect(result.resendApiKey).toBe("••••••••");
   });
 
+  // --- getEffectiveEmailConfig cache ---
+
+  test("getEffectiveEmailConfig reads the DB once per organization within the TTL", async () => {
+    await Promise.all([service.getEffectiveEmailConfig("org-1"), service.getEffectiveEmailConfig("org-1")]);
+    await service.getEffectiveEmailConfig("org-1");
+    expect(prisma.systemSettings.findUnique).toHaveBeenCalledTimes(1);
+    await service.getEffectiveEmailConfig("org-2");
+    expect(prisma.systemSettings.findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  test("saving settings invalidates the cached email config", async () => {
+    let from: string | null = null;
+    prisma.systemSettings.findUnique.mockImplementation(() => Promise.resolve(baseSettings({ emailFrom: from })));
+    expect((await service.getEffectiveEmailConfig("org-1")).from).toBe("noreply@atrium.local");
+    from = "new@example.com";
+    await service.updateSettings("org-1", { emailFrom: from } as never);
+    expect((await service.getEffectiveEmailConfig("org-1")).from).toBe("new@example.com");
+  });
+
+  test("expired cache entries are dropped, not kept with their decrypted secrets", async () => {
+    const realNow = Date.now;
+    const cache = (service as unknown as { emailConfigCache: Map<string, unknown> }).emailConfigCache;
+    try {
+      await service.getEffectiveEmailConfig("org-1");
+      expect(cache.has("org-1")).toBe(true);
+      Date.now = () => realNow() + 61_000;
+      await service.getEffectiveEmailConfig("org-2");
+      expect([...cache.keys()]).toEqual(["org-2"]);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test("a failed config load is not cached", async () => {
+    prisma.systemSettings.findUnique.mockImplementationOnce(() => Promise.reject(new Error("db down")));
+    await expect(service.getEffectiveEmailConfig("org-1")).rejects.toThrow("db down");
+    expect((await service.getEffectiveEmailConfig("org-1")).provider).toBeNull();
+  });
+
   // --- getEffectiveEmailConfig env fallback ---
 
   test("getEffectiveEmailConfig falls back to RESEND_API_KEY env var when no DB settings", async () => {

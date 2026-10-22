@@ -707,6 +707,47 @@ test.describe("Contact page", () => {
     await expect(page.getByRole("button", { name: "Invite to portal" })).toHaveCount(0);
     await context.close();
   });
+
+  test("a client taken off a project shows as ended and can be linked again", async ({ browser }) => {
+    const { context, page } = await createOwner(browser, "contact-ended-link");
+    const headers = { "x-csrf-token": (await context.cookies()).find((c) => c.name === "csrf-token")?.value ?? "" };
+    const stamp = Date.now();
+    const email = `ended-${stamp}@test.local`;
+    const { id } = await (await page.request.post(`${API}/contacts`, { data: { name: "Ended Person", email }, headers })).json();
+    await page.goto(`/dashboard/contacts/${id}`);
+    await page.getByRole("button", { name: "Invite to portal" }).click();
+    await expect(page.getByText("Invitation created")).toBeVisible();
+    const invitations = await (await page.request.get(`${API}/clients/invitations`)).json();
+    const { inviteLink } = invitations.find((i: { email: string }) => i.email === email);
+
+    const clientCtx = await browser.newContext({ storageState: undefined });
+    const clientPage = await clientCtx.newPage();
+    await clientPage.goto(inviteLink);
+    await clientPage.locator("#name").fill("Ended Person");
+    await clientPage.locator("#email").fill(email);
+    await clientPage.locator("#password").fill("Client123!");
+    await clientPage.getByRole("button", { name: /create account & join/i }).click();
+    await expect(clientPage).toHaveURL(/\/portal/, { timeout: 20000 });
+    await clientCtx.close();
+
+    const { userId } = await (await page.request.get(`${API}/contacts/${id}`)).json();
+    const name = `Ended project ${stamp}`;
+    const project = await (
+      await page.request.post(`${API}/projects`, { data: { name, clientUserIds: [userId] }, headers })
+    ).json();
+    const removed = await page.request.put(`${API}/projects/${project.id}`, { data: { clientUserIds: [] }, headers });
+    expect(removed.ok()).toBeTruthy();
+
+    await page.goto(`/dashboard/contacts/${id}`);
+    const row = page.getByRole("listitem").filter({ has: page.getByRole("link", { name }) });
+    await expect(row).toContainText("ended");
+
+    const picker = page.getByRole("combobox", { name: "Link a project" });
+    await picker.fill(name);
+    await page.getByRole("option", { name }).click();
+    await expect(row).not.toContainText("ended");
+    await context.close();
+  });
 });
 
 test.describe("Company page", () => {
@@ -802,6 +843,75 @@ test.describe("Company page", () => {
 
     const person = await (await request.get(`${API}/contacts/${personId}`)).json();
     expect(person.company).toBeNull();
+  });
+});
+
+test.describe("Company typeahead", () => {
+  test("finds a company beyond the first 100", async ({ page, request }) => {
+    const stamp = Date.now();
+    const company = (n: number): string => `Typeahead ${String(n).padStart(3, "0")} ${stamp}`;
+    // One CSV import makes 120 companies (the API rate limit rules out 120 separate requests).
+    const rows: string[] = Array.from({ length: 120 }, (_, i) => `Person ${stamp} ${i + 1},${company(i + 1)}`);
+    const imported = await request.post(`${API}/contacts/import`, {
+      headers: { "x-csrf-token": getCsrfToken() },
+      multipart: {
+        file: { name: "companies.csv", mimeType: "text/csv", buffer: Buffer.from(`Name,Company\n${rows.join("\n")}\n`) },
+        mapping: JSON.stringify({ Name: "name", Company: "company" }),
+      },
+    });
+    expect(imported.ok()).toBeTruthy();
+    const all = await (await request.get(`${API}/companies?search=${stamp}&limit=1`)).json();
+    expect(all.meta.total).toBeGreaterThan(100);
+
+    await page.goto("/dashboard/contacts");
+    await page.getByRole("button", { name: /add contact/i }).click();
+    await page.getByLabel("First name").fill(`Typeahead${stamp}`);
+    // Sorted by name, #120 is past the first 100 companies.
+    await page.getByLabel("Company", { exact: true }).fill(company(120));
+    await page.getByRole("option", { name: company(120) }).click();
+    await expect(page.getByLabel("Company", { exact: true })).toHaveValue(company(120));
+    await page.getByRole("button", { name: /^add contact$/i }).last().click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    // The shared workspace has more contacts than one page shows; find the new one by name.
+    await searchList(page, "Search name, company, email", `Typeahead${stamp}`);
+    const row = page.getByRole("row", { name: new RegExp(`Typeahead${stamp}`) });
+    await expect(row).toBeVisible();
+    await expect(row.getByText(company(120))).toBeVisible();
+  });
+});
+
+test.describe("Project picker", () => {
+  test("links a project from the contact panel using only the keyboard", async ({ page, request }) => {
+    const stamp = Date.now();
+    const headers = { "x-csrf-token": getCsrfToken() };
+    const project = await (
+      await request.post(`${API}/projects`, { data: { name: `Keyboard project ${stamp}` }, headers })
+    ).json();
+    const contact = await (
+      await request.post(`${API}/contacts`, { data: { name: `Keys ${stamp}` }, headers })
+    ).json();
+
+    await page.goto(`/dashboard/contacts/${contact.id}`);
+    const picker = page.getByRole("combobox", { name: "Link a project" });
+    await picker.focus();
+    await picker.pressSequentially(`Keyboard project ${stamp}`);
+    const option = page.getByRole("option", { name: `Keyboard project ${stamp}` });
+    await expect(option).toBeVisible();
+    await picker.press("ArrowDown");
+    await expect(picker).toHaveAttribute("aria-activedescendant", /.+/);
+    await expect(option).toHaveAttribute("aria-selected", "true");
+    await picker.press("Enter");
+
+    await expect(page.getByRole("link", { name: `Keyboard project ${stamp}` })).toHaveAttribute(
+      "href",
+      `/dashboard/projects/${project.id}`,
+    );
+    // Escape closes an open list without picking. The input is still focused, so ArrowDown reopens it.
+    await picker.press("ArrowDown");
+    await expect(page.getByRole("listbox", { name: "Projects" })).toBeVisible();
+    await picker.press("Escape");
+    await expect(page.getByRole("listbox", { name: "Projects" })).toHaveCount(0);
   });
 });
 

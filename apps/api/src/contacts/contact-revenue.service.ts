@@ -17,6 +17,25 @@ interface InvoiceRow {
 
 const MONTHS = 12;
 
+const PAID_ONLY = Prisma.sql`i.status = 'paid'`;
+
+/** True when invoice `inv` was paid inside one of link `linkId`'s gaps (time it was ended, then reopened). */
+function paidInGap(linkId: Prisma.Sql, inv: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`EXISTS (
+    SELECT 1 FROM "project_contact_gap" g
+    WHERE g."projectContactId" = ${linkId} AND ${inv}."paidAt" > g."startedAt" AND ${inv}."paidAt" < g."endedAt"
+  )`;
+}
+
+/**
+ * Joins a link (`sel`) to a paid invoice (`t`) on its project. An ended link only counts
+ * invoices paid until it ended, and no link counts one paid inside a gap; a paid invoice with
+ * no date predates link ends, so it counts. Same rule as `linksPaidAt` in contact-sync.
+ */
+const PAID_WHILE_LINKED = Prisma.sql`t."projectId" = sel."projectId"
+  AND (sel."endedAt" IS NULL OR t."paidAt" IS NULL OR t."paidAt" <= sel."endedAt")
+  AND NOT ${paidInGap(Prisma.sql`sel."linkId"`, Prisma.sql`t`)}`;
+
 function monthKey(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
@@ -41,17 +60,11 @@ export class ContactRevenueService {
   async paidTotals(contactIds: string[] | null, orgId: string): Promise<Map<string, number>> {
     const totals = new Map<string, number>();
     if (contactIds?.length === 0) return totals;
-    const only = contactIds ? Prisma.sql`pc."contactId" IN (${Prisma.join(contactIds)})` : Prisma.sql`TRUE`;
-    const rows = await this.prisma.$queryRaw<
-      Array<{ contactId: string; paid: bigint | number }>
-    >`
-      SELECT pc."contactId" AS "contactId", COALESCE(SUM(t."paidCents"), 0) AS paid
-      FROM "project_contact" pc
-      JOIN "contact" c ON c.id = pc."contactId" AND c."organizationId" = ${orgId}
-      JOIN (${this.invoiceTotals(orgId)}) t ON t."projectId" = pc."projectId"
-      WHERE ${only} AND t.status = 'paid'
-      GROUP BY pc."contactId"
-    `;
+    // One array parameter, so any number of ids stays under Postgres's bind-parameter limit.
+    const only = contactIds ? Prisma.sql`pc."contactId" = ANY(${contactIds}::text[])` : undefined;
+    const rows = await this.prisma.$queryRaw<Array<{ contactId: string; paid: bigint | number }>>(
+      this.paidPerContactSql(orgId, only),
+    );
     for (const r of rows) totals.set(r.contactId, Number(r.paid));
     return totals;
   }
@@ -63,54 +76,97 @@ export class ContactRevenueService {
   async paidTotalsForCompanies(companyIds: string[] | null, orgId: string): Promise<Map<string, number>> {
     const totals = new Map<string, number>();
     if (companyIds?.length === 0) return totals;
-    const only = companyIds
-      ? Prisma.sql`c."companyId" IN (${Prisma.join(companyIds)})`
-      : Prisma.sql`c."companyId" IS NOT NULL`;
-    const rows = await this.prisma.$queryRaw<
-      Array<{ companyId: string; paid: bigint | number }>
-    >`
-      SELECT d."companyId" AS "companyId", COALESCE(SUM(d."paidCents"), 0) AS paid
-      FROM (
-        SELECT DISTINCT c."companyId", t.id, t."paidCents"
-        FROM "project_contact" pc
-        JOIN "contact" c ON c.id = pc."contactId" AND c."organizationId" = ${orgId}
-        JOIN (${this.invoiceTotals(orgId)}) t ON t."projectId" = pc."projectId"
-        WHERE ${only} AND t.status = 'paid'
-      ) d
-      GROUP BY d."companyId"
-    `;
+    const only = companyIds ? Prisma.sql`c."companyId" = ANY(${companyIds}::text[])` : undefined;
+    const rows = await this.prisma.$queryRaw<Array<{ companyId: string; paid: bigint | number }>>(
+      this.paidPerCompanySql(orgId, only),
+    );
     for (const r of rows) totals.set(r.companyId, Number(r.paid));
     return totals;
   }
 
-  /** One row per invoice with its total and paid amount, so line items never fan out sums. */
-  private invoiceTotals(orgId: string): Prisma.Sql {
+  /**
+   * A query yielding `("contactId", paid)` for each contact with a paid invoice. `only` (over
+   * `pc`, the project_contact row, and `c`, the contact) limits the contacts and, with them, the
+   * invoices that get totalled; without it the whole workspace is. Usable as a subquery.
+   */
+  paidPerContactSql(orgId: string, only?: Prisma.Sql): Prisma.Sql {
     return Prisma.sql`
-      SELECT i.id, i.status, i."projectId", i."paidAt",
-        CASE WHEN i.type = 'uploaded' THEN COALESCE(i.amount, 0)
-             ELSE COALESCE((SELECT SUM(li.quantity * li."unitPrice") FROM "invoice_line_item" li WHERE li."invoiceId" = i.id), 0)
-        END AS "totalCents",
-        COALESCE(i."paidAmount",
-          CASE WHEN i.type = 'uploaded' THEN COALESCE(i.amount, 0)
-               ELSE COALESCE((SELECT SUM(li.quantity * li."unitPrice") FROM "invoice_line_item" li WHERE li."invoiceId" = i.id), 0)
-          END) AS "paidCents"
+      ${this.linkedProjects(orgId, Prisma.sql`pc."contactId"`, only ?? Prisma.sql`TRUE`, only !== undefined)}
+      SELECT sel."contactId" AS "contactId", SUM(t."paidCents") AS paid
+      FROM sel JOIN t ON ${PAID_WHILE_LINKED}
+      GROUP BY sel."contactId"
+    `;
+  }
+
+  /**
+   * A query yielding `("companyId", paid)` for each company with a paid invoice; an invoice
+   * shared by several of its contacts counts once. `only` is as in `paidPerContactSql`.
+   */
+  paidPerCompanySql(orgId: string, only?: Prisma.Sql): Prisma.Sql {
+    const companyOnly = only
+      ? Prisma.sql`c."companyId" IS NOT NULL AND ${only}`
+      : Prisma.sql`c."companyId" IS NOT NULL`;
+    return Prisma.sql`
+      ${this.linkedProjects(orgId, Prisma.sql`c."companyId"`, companyOnly, only !== undefined)}
+      SELECT d."companyId" AS "companyId", SUM(d."paidCents") AS paid
+      FROM (
+        SELECT DISTINCT sel."companyId", t.id, t."paidCents"
+        FROM sel JOIN t ON ${PAID_WHILE_LINKED}
+      ) d
+      GROUP BY d."companyId"
+    `;
+  }
+
+  /**
+   * `WITH sel(owner, "projectId"), t`: the project links matching `where`, and the paid invoices'
+   * totals, limited to those links' projects when `restrict` (a whole workspace skips that join).
+   */
+  private linkedProjects(orgId: string, owner: Prisma.Sql, where: Prisma.Sql, restrict: boolean): Prisma.Sql {
+    const linked = restrict ? Prisma.sql`AND i."projectId" IN (SELECT "projectId" FROM sel)` : Prisma.empty;
+    return Prisma.sql`
+      WITH sel AS (
+        SELECT DISTINCT ${owner}, pc.id AS "linkId", pc."projectId", pc."endedAt"
+        FROM "project_contact" pc
+        JOIN "contact" c ON c.id = pc."contactId" AND c."organizationId" = ${orgId}
+        WHERE ${where}
+      ),
+      t AS MATERIALIZED (${this.invoiceTotals(orgId, Prisma.sql`${PAID_ONLY} ${linked}`)})
+    `;
+  }
+
+  /**
+   * One row per invoice matching `filter` (over `i`) with its total and paid amount. Callers
+   * wrap it in a MATERIALIZED CTE so line items are summed once per invoice, not per joined row.
+   */
+  private invoiceTotals(orgId: string, filter: Prisma.Sql): Prisma.Sql {
+    return Prisma.sql`
+      SELECT i.id, i.status, i."projectId", i."paidAt", x.total AS "totalCents",
+        COALESCE(i."paidAmount", x.total) AS "paidCents"
       FROM "invoice" i
-      WHERE i."organizationId" = ${orgId} AND i."projectId" IS NOT NULL
+      LEFT JOIN LATERAL (
+        SELECT SUM(li.quantity * li."unitPrice") AS s FROM "invoice_line_item" li WHERE li."invoiceId" = i.id
+      ) li ON TRUE
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN i.type = 'uploaded' THEN COALESCE(i.amount, 0) ELSE COALESCE(li.s, 0) END AS total
+      ) x
+      WHERE i."organizationId" = ${orgId} AND i."projectId" IS NOT NULL AND ${filter}
     `;
   }
 
   private async compute(contactFilter: Prisma.Sql, orgId: string, now: Date): Promise<Revenue> {
     // DISTINCT on invoice id so a project shared by several contacts counts once.
+    const linked = Prisma.sql`i.id IN (
+      SELECT DISTINCT i2.id
+      FROM "project_contact" pc
+      JOIN "contact" c ON c.id = pc."contactId" AND c."organizationId" = ${orgId}
+      JOIN "invoice" i2 ON i2."projectId" = pc."projectId" AND i2."organizationId" = ${orgId}
+      WHERE ${contactFilter}
+        AND (pc."endedAt" IS NULL OR (i2.status = 'paid' AND (i2."paidAt" IS NULL OR i2."paidAt" <= pc."endedAt")))
+        AND NOT ${paidInGap(Prisma.sql`pc.id`, Prisma.sql`i2`)}
+    )`;
     const rows = await this.prisma.$queryRaw<InvoiceRow[]>`
-      SELECT t.status, t."paidAt", t."paidCents", t."totalCents"
-      FROM (${this.invoiceTotals(orgId)}) t
-      WHERE t.id IN (
-        SELECT DISTINCT t2.id
-        FROM "project_contact" pc
-        JOIN "contact" c ON c.id = pc."contactId" AND c."organizationId" = ${orgId}
-        JOIN "invoice" t2 ON t2."projectId" = pc."projectId" AND t2."organizationId" = ${orgId}
-        WHERE ${contactFilter}
-      )
+      WITH t AS MATERIALIZED (${this.invoiceTotals(orgId, linked)})
+      SELECT t.status, t."paidAt", t."paidCents", t."totalCents" FROM t
     `;
 
     const monthly: Revenue["monthly"] = [];

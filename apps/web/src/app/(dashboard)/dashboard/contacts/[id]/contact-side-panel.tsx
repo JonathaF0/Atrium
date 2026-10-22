@@ -1,18 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useId, useState } from "react";
 import Link from "next/link";
 import { Facebook, Instagram, Link as LinkIcon, Linkedin, Phone, Twitter, Youtube } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { socialSite, telHref } from "@/lib/contact-fields";
 import type { SocialSite } from "@/lib/contact-fields";
 import { apiFetch } from "@/lib/api";
+import { TYPEAHEAD_LIMIT, useListboxKeys, useTypeahead } from "@/lib/use-typeahead";
 import { useToast } from "@/components/toast";
 import { LabelPicker } from "@/components/label-picker";
 import { LabelBadge } from "@/components/label-badge";
 import { inputClass } from "../shared";
 import { FollowUpCard } from "./follow-up-card";
 import type { ContactDetail } from "./types";
+import { useCachedApi } from "@/lib/cached";
 
 interface Label {
   id: string;
@@ -30,23 +32,39 @@ interface Props {
   onChanged: () => void;
 }
 
+function formatShortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 const headingClass =
   "text-xs font-semibold uppercase tracking-wide text-[var(--muted-foreground)] mb-2";
 
 function ProjectsSection({ contact, onChanged }: Props) {
   const { error: showError } = useToast();
-  const [options, setOptions] = useState<ProjectOption[]>([]);
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
+  const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
+  // Linked projects are hidden from the results, so ask for enough to still show 10 others.
+  const { items: options } = useTypeahead<ProjectOption>(
+    "/projects",
+    search.trim(),
+    searching,
+    TYPEAHEAD_LIMIT + contact.projects.length,
+  );
 
-  useEffect(() => {
-    apiFetch<{ data: ProjectOption[] }>("/projects?limit=100")
-      .then((res) => setOptions(res.data))
-      .catch(console.error);
-  }, [contact.projects.length]);
+  // A project whose link ended stays pickable: linking it again reopens the link.
+  const linkedIds: Set<string> = new Set(contact.projects.filter((p) => !p.endedAt).map((p) => p.id));
+  const available = options.filter((p) => !linkedIds.has(p.id)).slice(0, TYPEAHEAD_LIMIT);
+  const pickerId: string = useId();
+  const keys = useListboxKeys(available.length, searching, setSearching, (i) => void pick(available[i].id), `${search}|${available.map((p) => p.id).join(",")}`);
 
-  const linkedIds = new Set(contact.projects.map((p) => p.id));
-  const available = options.filter((p) => !linkedIds.has(p.id));
+  async function pick(projectId: string): Promise<void> {
+    if (await link(projectId)) {
+      setSearch("");
+      setSearching(false);
+    }
+  }
 
   async function link(projectId: string): Promise<boolean> {
     try {
@@ -99,7 +117,9 @@ function ProjectsSection({ contact, onChanged }: Props) {
               <Link href={`/dashboard/projects/${p.id}`} className="hover:underline">
                 {p.name}
               </Link>{" "}
-              <span className="text-xs text-[var(--muted-foreground)]">({p.status})</span>
+              <span className="text-xs text-[var(--muted-foreground)]">
+                ({p.status}){p.endedAt ? ` · ended ${formatShortDate(p.endedAt)}` : ""}
+              </span>
             </span>
             <button
               onClick={() => unlink(p.id)}
@@ -111,21 +131,57 @@ function ProjectsSection({ contact, onChanged }: Props) {
           </li>
         ))}
       </ul>
-      {available.length > 0 && (
-        <select
+      <div className="relative mb-2">
+        <input
+          role="combobox"
           aria-label="Link a project"
-          value=""
-          onChange={(e) => e.target.value && link(e.target.value)}
-          className={`${inputClass} mb-2`}
-        >
-          <option value="">Link existing project…</option>
-          {available.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      )}
+          aria-expanded={searching}
+          aria-controls={searching ? `${pickerId}-list` : undefined}
+          aria-autocomplete="list"
+          aria-activedescendant={searching && keys.active >= 0 ? `${pickerId}-${keys.active}` : undefined}
+          placeholder="Link existing project…"
+          value={search}
+          autoComplete="off"
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setSearching(true);
+          }}
+          onFocus={() => setSearching(true)}
+          onBlur={() => setSearching(false)}
+          onKeyDown={keys.onKeyDown}
+          className={inputClass}
+        />
+        {searching && (
+          <ul
+            id={`${pickerId}-list`}
+            role="listbox"
+            aria-label="Projects"
+            className="absolute z-10 mt-1 w-full max-h-60 overflow-auto bg-[var(--background)] border border-[var(--border)] rounded-lg shadow-lg text-sm"
+          >
+            {available.length === 0 && (
+              <li role="presentation" className="px-3 py-2 text-[var(--muted-foreground)]">
+                No matching projects
+              </li>
+            )}
+            {available.map((p, i) => (
+              <li
+                key={p.id}
+                id={`${pickerId}-${i}`}
+                role="option"
+                aria-selected={i === keys.active}
+                // preventDefault keeps focus in the input, so the list stays open until a pick.
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  void pick(p.id);
+                }}
+                className={`px-3 py-2 cursor-pointer hover:bg-[var(--muted)] ${i === keys.active ? "bg-[var(--muted)]" : ""}`}
+              >
+                {p.name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       {creating ? (
         <form onSubmit={createAndLink} className="flex gap-2">
           <input
@@ -158,11 +214,7 @@ function ProjectsSection({ contact, onChanged }: Props) {
 
 function TagsSection({ contact, onChanged }: Props) {
   const { error: showError } = useToast();
-  const [orgLabels, setOrgLabels] = useState<Label[]>([]);
-
-  useEffect(() => {
-    apiFetch<Label[]>("/labels").then(setOrgLabels).catch(console.error);
-  }, []);
+  const orgLabels: Label[] = useCachedApi<Label[]>("/labels") ?? [];
 
   const assigned = contact.labels.map((l) => l.id);
 
@@ -189,7 +241,6 @@ function TagsSection({ contact, onChanged }: Props) {
           labels={orgLabels}
           assigned={assigned}
           onToggle={toggle}
-          onLabelsChange={setOrgLabels}
           align="right"
         />
       </div>
