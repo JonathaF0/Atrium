@@ -77,30 +77,49 @@ Error reports are stored in Sentry and accessible only to the Atrium maintainers
 # Product Analytics
 
 Separate from error reporting, Atrium supports optional web analytics via the
-`NEXT_PUBLIC_TRACKERS` environment variable. This is **off by default and
-self-directed**: nothing loads unless you configure it, and the data goes to
-*your* analytics instance, never to the Atrium maintainers.
+`ATRIUM_TRACKERS` environment variable. This is **off by default and
+self-directed**: nothing loads unless you configure it, and the data goes
+wherever you point it — normally your own analytics instance. It is not used
+to track individual users; the maintainers use it for the hosted version of
+Atrium.
 
 ## Enabling it
 
 ```bash
-NEXT_PUBLIC_TRACKERS='[{"src":"https://umami.example.com/script.js","data-website-id":"your-id"}]'
+ATRIUM_TRACKERS='[{"src":"https://umami.example.com/script.js","data-website-id":"your-id"}]'
 ```
 
-Set it as a normal runtime environment variable on your container. Every route
-that can report is rendered per request, so the running container's environment
-is read directly — no rebuild required, and changing the value takes effect on
-restart.
+Set it as a normal runtime environment variable on your container. The script
+tags are rendered on the server for every page, per request, from the running
+container's environment — no rebuild required, and changing the value takes
+effect on restart. `NEXT_PUBLIC_TRACKERS` is still read as a fallback, also at
+runtime, so existing setups keep working. It is deprecated (see
+[deprecations.md](deprecations.md)): rename it to `ATRIUM_TRACKERS`.
 
 The published `vibralabs/atrium` image ships with **no** tracker configured, and
 this is deliberate: because analytics is runtime configuration, the image the
 maintainers publish is the same one everyone runs, and it reports nowhere by
-default. A self-hosted Atrium never sends anything to the maintainers.
+default. A self-hosted Atrium never sends anything to the maintainers unless
+you opt in.
 
-> Historical note: the auth pages (`/signup`, `/accept-invite`, ...) used to be
-> statically prerendered, which resolved this variable at build time and left
-> them permanently untracked in any image built without it. They are now
-> rendered per request (`apps/web/src/app/(auth)/layout.tsx`).
+## Sharing usage data with the maintainers (optional)
+
+If you'd like to help the maintainers see how Atrium is used, you can point
+your install at their Umami instance:
+
+```bash
+ATRIUM_TRACKERS='[{"src":"https://umami.cotto.dev/script.js","data-website-id":"85b1a5bd-7983-4502-8530-f4b2923de8ef"}]'
+```
+
+This shares high-level usage only: page views on masked paths and named
+product events. Identifiers are stripped before anything is sent (see below).
+To stop sharing, unset the variable and restart.
+
+> Historical note: trackers used to be read from `NEXT_PUBLIC_TRACKERS` directly.
+> Next.js replaces `NEXT_PUBLIC_*` with its build-time value, even in server
+> code, so images built without it (or with it empty) ignored the runtime value
+> entirely. See `apps/web/src/lib/trackers.ts` and
+> `apps/web/src/components/trackers.tsx`.
 
 ## Identifiers are stripped before sending
 
