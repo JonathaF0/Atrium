@@ -258,3 +258,11 @@ export function keepMentions(content: string, keep: ReadonlySet<string>): string
     keep.has(id) ? token : `@${name}`,
   );
 }
+
+/** Currency used when STRIPE_CURRENCY is unset. */
+export const DEFAULT_CURRENCY = "usd";
+
+/** Formats an amount in minor units (cents) as a localized currency string. */
+export function formatMoney(cents: number, currency: string = DEFAULT_CURRENCY): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
+}
