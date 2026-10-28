@@ -24,3 +24,7 @@ e2e/e2e/
 
 # Local planning docs
 docs/superpowers/
+
+# Local data and outreach exports
+atrium_signups*.csv
+marketing_email*.html

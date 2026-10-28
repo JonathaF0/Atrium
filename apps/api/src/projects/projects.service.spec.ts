@@ -34,6 +34,9 @@ const mockPrisma = {
   projectLabel: {
     createMany: mock(() => Promise.resolve({ count: 0 })),
   },
+  document: {
+    count: mock(() => Promise.resolve(0)),
+  },
   task: {
     groupBy: mock(() => Promise.resolve([])),
     createMany: mock(() => Promise.resolve({ count: 0 })),
@@ -50,6 +53,9 @@ const mockPrisma = {
   },
   member: {
     count: mock(() => Promise.resolve(2)),
+  },
+  organization: {
+    findUnique: mock(() => Promise.resolve({ name: "Acme", members: [] })),
   },
   $queryRaw: mock(() => Promise.resolve([] as unknown[])),
   $transaction: mock((arg: unknown) => {
@@ -96,9 +102,26 @@ describe("ProjectsService", () => {
     mockPrisma.project.count = mock(() => Promise.resolve(1));
 
     const result = await service.findAll("org-1", {});
-    expect(result.data).toEqual(projects);
+    expect(result.data).toEqual([{ ...projects[0], taskCount: 0, completedTaskCount: 0 }]);
     expect(result.meta.total).toBe(1);
     expect(result.meta.page).toBe(1);
+  });
+
+  it("findAll counts task progress in one query instead of loading every task", async () => {
+    mockPrisma.project.findMany.mockReturnValue(Promise.resolve([{ id: "p1", clients: [] }]));
+    mockPrisma.project.count = mock(() => Promise.resolve(1));
+    mockPrisma.task.groupBy.mockReturnValueOnce(
+      Promise.resolve([
+        { projectId: "p1", status: "done", _count: { _all: 3 }, _max: { updatedAt: null } },
+        { projectId: "p1", status: "todo", _count: { _all: 1 }, _max: { updatedAt: null } },
+      ]) as never,
+    );
+
+    const result = await service.findAll("org-1", {});
+
+    const args = mockPrisma.project.findMany.mock.calls.at(-1)?.[0] as { include: Record<string, unknown> };
+    expect(args.include).not.toHaveProperty("tasks");
+    expect(result.data[0]).toEqual(expect.objectContaining({ taskCount: 4, completedTaskCount: 3 }));
   });
 
   it("findByClient returns a pendingApprovals count per project", async () => {
@@ -109,6 +132,70 @@ describe("ProjectsService", () => {
     const res = await service.findByClient("client-1", "org-1", {});
     expect(res.data[0]).toEqual(expect.objectContaining({ id: "p1", pendingApprovals: 2 }));
     expect(res.data[0]).not.toHaveProperty("_count");
+  });
+
+  it("findByClient limits a client to their own projects", async () => {
+    mockPrisma.project.findMany.mockReturnValue(Promise.resolve([]));
+    mockPrisma.project.count = mock(() => Promise.resolve(0));
+    await service.findByClient("client-1", "org-1", {});
+    const args = mockPrisma.project.findMany.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> };
+    expect(args.where.clients).toEqual({ some: { userId: "client-1" } });
+  });
+
+  it("findByClient shows an owner or admin every project in the workspace", async () => {
+    mockPrisma.project.findMany.mockReturnValue(Promise.resolve([]));
+    mockPrisma.project.count = mock(() => Promise.resolve(0));
+    await service.findByClient("owner-1", "org-1", {}, true);
+    const args = mockPrisma.project.findMany.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> };
+    expect(args.where).not.toHaveProperty("clients");
+    expect(args.where.organizationId).toBe("org-1");
+  });
+
+  it("findOneByClient lets an owner or admin open a project with no client", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(Promise.resolve({ id: "p1", files: [] }));
+    await service.findOneByClient("p1", "owner-1", "org-1", true);
+    const args = mockPrisma.project.findFirst.mock.calls.at(-1)?.[0] as { where: Record<string, unknown> };
+    expect(args.where).not.toHaveProperty("clients");
+    expect(args.where.organizationId).toBe("org-1");
+  });
+
+  it("findOneByClient names the project lead without exposing the owner's email", async () => {
+    mockPrisma.project.findFirst.mockReturnValue(Promise.resolve({ id: "p1", files: [] }));
+    await service.findOneByClient("p1", "user-client", "org-1");
+    const args = mockPrisma.organization.findUnique.mock.calls.at(-1)?.[0] as {
+      select: { members: { select: { user: { select: Record<string, boolean> } } } };
+    };
+    expect(args.select.members.select.user.select).toEqual({ id: true, name: true });
+  });
+
+  it("getStats adds deliverables to review and documents to sign into waitingOnClients", async () => {
+    mockPrisma.project.count = mock((args: { where: { status?: unknown } }) =>
+      Promise.resolve(args.where.status === "in_review" ? 2 : 7),
+    ) as never;
+    mockPrisma.document.count.mockImplementation(((args: { where: { type?: unknown } }) =>
+      Promise.resolve(args.where.type === "deliverable" ? 3 : 4)) as never);
+
+    const stats = await service.getStats("org-1");
+
+    expect(stats.inReview).toBe(2);
+    expect(stats.waitingReviews).toBe(3);
+    expect(stats.waitingSignatures).toBe(4);
+    expect(stats.waitingOnClients).toBe(7);
+  });
+
+  it("getStats counts client-waiting documents in live projects, each document once", async () => {
+    mockPrisma.project.count = mock(() => Promise.resolve(0));
+    mockPrisma.document.count.mockClear();
+    await service.getStats("org-1");
+    const wheres = mockPrisma.document.count.mock.calls.map(
+      (c) => (c as unknown as [{ where: Record<string, unknown> }])[0].where,
+    );
+    expect(wheres).toHaveLength(2);
+    for (const where of wheres) {
+      expect(where.project).toEqual({ organizationId: "org-1", archivedAt: null });
+    }
+    const signatures = wheres.find((w) => w.requiresSignature === true);
+    expect(signatures?.type).toEqual({ not: "deliverable" });
   });
 
   it("findByClient adds checkbox-task progress and the latest client-visible activity", async () => {
@@ -158,7 +245,9 @@ describe("ProjectsService", () => {
     expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         include: expect.objectContaining({
-          files: { where: { documents: { none: {} }, signedDocuments: { none: {} }, documentVersions: { none: {} } } },
+          files: expect.objectContaining({
+            where: { documents: { none: {} }, signedDocuments: { none: {} }, documentVersions: { none: {} } },
+          }),
         }),
       }),
     );
@@ -323,11 +412,17 @@ describe("ProjectsService", () => {
 
     const result = await service.findOneByClient("proj-active", "user-client", "org-1");
 
-    expect(result).toEqual({ ...project, openVotes: 0 });
+    expect(result).toEqual({
+      ...project,
+      organization: { name: "Acme", members: [] },
+      openVotes: 0,
+    });
     expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         include: expect.objectContaining({
-          files: { where: { documents: { none: {} }, signedDocuments: { none: {} }, documentVersions: { none: {} } } },
+          files: expect.objectContaining({
+            where: { documents: { none: {} }, signedDocuments: { none: {} }, documentVersions: { none: {} } },
+          }),
         }),
         where: expect.objectContaining({
           id: "proj-active",
@@ -346,7 +441,12 @@ describe("ProjectsService", () => {
 
     const result = await service.findOneByClient("p1", "user-client", "org-1");
 
-    expect(result).toEqual({ id: "p1", files: [], openVotes: 3 });
+    expect(result).toEqual({
+      id: "p1",
+      files: [],
+      organization: { name: "Acme", members: [] },
+      openVotes: 3,
+    });
     expect(mockPrisma.project.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         include: expect.objectContaining({

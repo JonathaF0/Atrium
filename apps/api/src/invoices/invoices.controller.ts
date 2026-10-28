@@ -31,6 +31,8 @@ import {
   Roles,
   CurrentUser,
   CurrentOrg,
+  CurrentMember,
+  isPrivilegedRole,
   PlanLimit,
   sanitizeFilename,
   contentDisposition,
@@ -107,13 +109,16 @@ export class InvoicesController {
     @CurrentUser("id") userId: string,
     @CurrentOrg("id") orgId: string,
     @Query() query: MineInvoiceQueryDto,
+    @CurrentMember("role") role?: string,
   ) {
+    const isPrivileged = isPrivilegedRole(role);
     return this.invoicesService.findMine(
       userId,
       orgId,
       query.page,
       query.limit,
       query.projectId,
+      isPrivileged,
     );
   }
 
@@ -123,9 +128,11 @@ export class InvoicesController {
     @CurrentUser("id") userId: string,
     @CurrentOrg("id") orgId: string,
     @Res() res: Response,
+    @CurrentMember("role") role?: string,
   ) {
+    const isPrivileged = isPrivilegedRole(role);
     // Verify client access first
-    await this.invoicesService.findOneMine(id, userId, orgId);
+    await this.invoicesService.findOneMine(id, userId, orgId, isPrivileged);
     const { stream, filename } = await this.invoicePdfService.generate(id, orgId);
     const safeName = sanitizeFilename(filename);
     res.setHeader("Content-Type", "application/pdf");
@@ -165,8 +172,10 @@ export class InvoicesController {
     @Param("id") id: string,
     @CurrentUser("id") userId: string,
     @CurrentOrg("id") orgId: string,
+    @CurrentMember("role") role?: string,
   ) {
-    return this.invoicesService.findOneMine(id, userId, orgId);
+    const isPrivileged = isPrivilegedRole(role);
+    return this.invoicesService.findOneMine(id, userId, orgId, isPrivileged);
   }
 
   @Get(":id/pdf")

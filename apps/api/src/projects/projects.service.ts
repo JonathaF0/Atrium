@@ -36,6 +36,9 @@ const STANDALONE_FILES = {
   documentVersions: { none: {} },
 };
 
+/** Checkbox-task progress for one project. */
+type TaskProgress = { total: number; done: number; lastAt: Date | null };
+
 @Injectable()
 export class ProjectsService implements OnApplicationBootstrap {
   private readonly logger: Logger = new Logger(ProjectsService.name);
@@ -114,7 +117,12 @@ export class ProjectsService implements OnApplicationBootstrap {
       this.prisma.project.findMany({
         where,
         include: {
-          clients: { select: { userId: true } },
+          clients: {
+            select: {
+              userId: true,
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
           labels: { include: { label: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -123,7 +131,48 @@ export class ProjectsService implements OnApplicationBootstrap {
       this.prisma.project.count({ where }),
     ]);
 
-    return paginatedResponse(data, total, page, limit);
+    const taskStats = await this.taskProgress(data.map((p) => p.id), organizationId);
+    const rows = data.map((p) => {
+      const stats = taskStats.get(p.id);
+      return { ...p, taskCount: stats?.total ?? 0, completedTaskCount: stats?.done ?? 0 };
+    });
+    return paginatedResponse(rows, total, page, limit);
+  }
+
+  /**
+   * Task progress per project, in one query. Counts checkbox tasks only: an open
+   * vote is waiting on the client, not agency work. Cancelled tasks are dropped
+   * so they don't cap the bar.
+   */
+  private async taskProgress(
+    projectIds: string[],
+    organizationId: string,
+  ): Promise<Map<string, TaskProgress>> {
+    const taskStats = new Map<string, TaskProgress>();
+    if (projectIds.length === 0) return taskStats;
+
+    const taskGroups = await this.prisma.task.groupBy({
+      by: ["projectId", "status"],
+      where: {
+        projectId: { in: projectIds },
+        organizationId,
+        type: "checkbox",
+        status: { not: "cancelled" },
+      },
+      _count: { _all: true },
+      _max: { updatedAt: true },
+    });
+
+    for (const g of taskGroups) {
+      const stats = taskStats.get(g.projectId) ?? { total: 0, done: 0, lastAt: null };
+      stats.total += g._count._all;
+      if (g.status === "done") stats.done += g._count._all;
+      if (g._max.updatedAt && (!stats.lastAt || g._max.updatedAt > stats.lastAt)) {
+        stats.lastAt = g._max.updatedAt;
+      }
+      taskStats.set(g.projectId, stats);
+    }
+    return taskStats;
   }
 
   async findOne(id: string, organizationId: string) {
@@ -144,46 +193,70 @@ export class ProjectsService implements OnApplicationBootstrap {
     id: string,
     clientUserId: string,
     organizationId: string,
+    isPrivileged = false,
   ) {
-    const project = await this.prisma.project.findFirst({
-      where: {
-        id,
-        organizationId,
-        archivedAt: null,
-        clients: { some: { userId: clientUserId } },
-      },
-      include: {
-        files: { where: STANDALONE_FILES },
-        // Counted server-side so the portal banner isn't limited to the task page it has loaded.
-        _count: {
-          select: {
-            tasks: {
-              where: {
-                type: "decision",
-                closedAt: null,
-                status: { notIn: ["done", "cancelled"] },
-                votes: { none: { userId: clientUserId } },
+    const clientFilter = isPrivileged
+      ? {}
+      : { clients: { some: { userId: clientUserId } } };
+
+    // The project lead is shown by name only, never with the owner's email.
+    const [project, org] = await Promise.all([
+      this.prisma.project.findFirst({
+        where: {
+          id,
+          organizationId,
+          archivedAt: null,
+          ...clientFilter,
+        },
+        include: {
+          files: { where: STANDALONE_FILES, orderBy: { createdAt: "desc" } },
+          // Counted server-side so the portal banner isn't limited to the task page it has loaded.
+          _count: {
+            select: {
+              tasks: {
+                where: {
+                  type: "decision",
+                  closedAt: null,
+                  status: { notIn: ["done", "cancelled"] },
+                  votes: { none: { userId: clientUserId } },
+                },
               },
             },
           },
         },
-      },
-    });
+      }),
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: {
+          name: true,
+          members: {
+            where: { role: "owner" },
+            select: { user: { select: { id: true, name: true } } },
+            take: 1,
+          },
+        },
+      }),
+    ]);
     if (!project) throw new NotFoundException("Project not found");
     const { _count, ...rest } = project;
-    return { ...rest, openVotes: _count?.tasks ?? 0 };
+    return { ...rest, organization: org ?? undefined, openVotes: _count?.tasks ?? 0 };
   }
 
   async findByClient(
     clientUserId: string,
     organizationId: string,
     query: { page?: number; limit?: number; search?: string },
+    isPrivileged = false,
   ) {
     const { page = 1, limit = 20, search } = query;
+    const clientFilter = isPrivileged
+      ? {}
+      : { clients: { some: { userId: clientUserId } } };
+
     const where: ProjectWhereInput = {
       organizationId,
       archivedAt: null,
-      clients: { some: { userId: clientUserId } },
+      ...clientFilter,
     };
 
     if (search) {
@@ -211,32 +284,7 @@ export class ProjectsService implements OnApplicationBootstrap {
       this.prisma.project.count({ where }),
     ]);
 
-    // Progress counts checkbox tasks only: an open vote is waiting on the client,
-    // not agency work. Cancelled tasks are dropped so they don't cap the bar.
-    const taskGroups = data.length
-      ? await this.prisma.task.groupBy({
-          by: ["projectId", "status"],
-          where: {
-            projectId: { in: data.map((p) => p.id) },
-            organizationId,
-            type: "checkbox",
-            status: { not: "cancelled" },
-          },
-          _count: { _all: true },
-          _max: { updatedAt: true },
-        })
-      : [];
-
-    const taskStats = new Map<string, { total: number; done: number; lastAt: Date | null }>();
-    for (const g of taskGroups) {
-      const stats = taskStats.get(g.projectId) ?? { total: 0, done: 0, lastAt: null };
-      stats.total += g._count._all;
-      if (g.status === "done") stats.done += g._count._all;
-      if (g._max.updatedAt && (!stats.lastAt || g._max.updatedAt > stats.lastAt)) {
-        stats.lastAt = g._max.updatedAt;
-      }
-      taskStats.set(g.projectId, stats);
-    }
+    const taskStats = await this.taskProgress(data.map((p) => p.id), organizationId);
 
     const rows = data.map(({ _count, updates, files, ...p }) => {
       const stats = taskStats.get(p.id);
@@ -479,7 +527,7 @@ export class ProjectsService implements OnApplicationBootstrap {
   }
 
   async getStats(organizationId: string) {
-    const [total, inProgress, completed] = await Promise.all([
+    const [total, inProgress, inReview, completed, waitingReviews, waitingSignatures] = await Promise.all([
       this.prisma.project.count({
         where: { organizationId, archivedAt: null, status: { not: PROJECT_STATUSES.CANCELLED } },
       }),
@@ -487,10 +535,33 @@ export class ProjectsService implements OnApplicationBootstrap {
         where: { organizationId, archivedAt: null, status: "in_progress" },
       }),
       this.prisma.project.count({
+        where: { organizationId, archivedAt: null, status: "in_review" },
+      }),
+      this.prisma.project.count({
         where: { organizationId, archivedAt: null, status: "completed" },
       }),
+      this.prisma.document.count({
+        where: { project: { organizationId, archivedAt: null }, type: "deliverable", status: "pending" },
+      }),
+      // Deliverables are counted above, so a deliverable that also needs a signature isn't counted twice.
+      this.prisma.document.count({
+        where: {
+          project: { organizationId, archivedAt: null },
+          type: { not: "deliverable" },
+          requiresSignature: true,
+          status: "pending",
+        },
+      }),
     ]);
-    return { total, inProgress, completed };
+    return {
+      total,
+      inProgress,
+      inReview,
+      completed,
+      waitingOnClients: waitingReviews + waitingSignatures,
+      waitingReviews,
+      waitingSignatures,
+    };
   }
 
   async exportAll(organizationId: string) {

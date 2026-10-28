@@ -17,7 +17,7 @@ import { Readable } from "stream";
 import { extname } from "path";
 import type { Response } from "express";
 import { DOWNLOAD_CACHE } from "../common/helpers/http-cache";
-import { paginationArgs, paginatedResponse, sanitizeFilename, contentDisposition, assertProjectAccess, BLOCKED_EXTENSIONS } from "../common";
+import { paginationArgs, paginatedResponse, sanitizeFilename, contentDisposition, assertProjectAccess, BLOCKED_EXTENSIONS, isPrivilegedRole } from "../common";
 
 
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10MB
@@ -304,12 +304,15 @@ export class UpdatesService {
     organizationId: string,
     page = 1,
     limit = 20,
+    isPrivileged = false,
   ) {
-    const assignment = await this.prisma.projectClient.findFirst({
-      where: { projectId, userId: clientUserId },
-    });
-    if (!assignment) {
-      throw new ForbiddenException("Not assigned to this project");
+    if (!isPrivileged) {
+      const assignment = await this.prisma.projectClient.findFirst({
+        where: { projectId, userId: clientUserId },
+      });
+      if (!assignment) {
+        throw new ForbiddenException("Not assigned to this project");
+      }
     }
 
     return this.findTimeline(projectId, organizationId, page, limit);
@@ -327,7 +330,7 @@ export class UpdatesService {
     });
     if (!update) throw new NotFoundException("Update not found");
 
-    const isPrivileged = role === "owner" || role === "admin";
+    const isPrivileged = isPrivilegedRole(role);
     const isAuthor = update.authorId === userId;
     if (!isAuthor && !isPrivileged) {
       throw new ForbiddenException("Cannot edit this update");

@@ -55,22 +55,26 @@ test.describe("Deliverable approvals", () => {
 
     // The dashboard lists the pending approval (so its later absence is meaningful).
     await owner.goto(`${WEB_URL}/dashboard`);
-    await expect(owner.getByTestId("pending-approvals-card")).toBeVisible();
+    await expect(owner.getByTestId("pending-approval")).toBeVisible();
 
     // 2. Client sees the banner, opens the review, can't send changes without a note.
     const { ctx: clientCtx, page: client } = await loginClient(browser, clientEmail, password);
     await client.goto(`${WEB_URL}/portal/projects/${project.id}`);
-    await expect(client.getByText("1 item to review")).toBeVisible();
-    await expect(client.getByText("1 to approve")).toBeVisible();
-    await client.getByText("1 item to review").click();
+    // A single pending deliverable is highlighted on its own, with no extra summary banner.
+    await expect(client.getByText("Needs your review")).toBeVisible();
+    await expect(client.getByText("1 item to review")).toHaveCount(0);
     await client.getByRole("button", { name: /^review$/i }).first().click();
     await expect(client.getByTestId("deliverable-review").getByText("First pass at the homepage")).toBeVisible();
     await client.getByTestId("deliverable-review").getByRole("button", { name: /request changes/i }).click();
-    await expect(client.getByRole("button", { name: /^send$/i })).toBeDisabled();
+    const review = client.getByTestId("deliverable-review");
+    await expect(review.getByRole("button", { name: /^send$/i })).toBeDisabled();
     await client.getByPlaceholder(/what should change/i).fill("Make the logo bigger");
-    await client.getByRole("button", { name: /^send$/i }).click();
-    // The review closes after a decision; reopen it to read the recorded decision.
+    await review.getByRole("button", { name: /^send$/i }).click();
+    // The review closes after a decision, and the overview stops highlighting it
+    // (it's now waiting on the agency). Reopen it from the Files tab to read the decision.
     await expect(client.getByTestId("deliverable-review")).toHaveCount(0);
+    await expect(client.getByText("Needs your review")).toHaveCount(0);
+    await client.goto(`${WEB_URL}/portal/projects/${project.id}?tab=files`);
     await client.getByRole("button", { name: /^review$/i }).first().click();
     await expect(client.getByText(/changes requested by/i)).toBeVisible();
     await client.keyboard.press("Escape");
@@ -94,7 +98,9 @@ test.describe("Deliverable approvals", () => {
     await client.goto(`${WEB_URL}/portal/projects/${project.id}?tab=files`);
     await expect(client.getByText("Awaiting review").first()).toBeVisible();
     // Portal document rows show the title, so a plain file row would be the only place a filename appears.
-    await expect(client.getByText("homepage", { exact: true })).toHaveCount(1);
+    // The title shows twice: in the "Needs your review" card and in the Files list.
+    await expect(client.getByTestId("review-highlight").getByText("homepage", { exact: true })).toHaveCount(1);
+    await expect(client.getByText("homepage", { exact: true })).toHaveCount(2);
     await expect(client.getByText(/homepage(-v2)?\.png/)).toHaveCount(0);
     const clientProject = await (await client.request.get(`${API_URL}/api/projects/mine/${project.id}`)).json();
     expect(clientProject.files).toEqual([]);
@@ -117,7 +123,7 @@ test.describe("Deliverable approvals", () => {
     const pendingLoaded = owner.waitForResponse((r) => r.url().includes("/api/documents/approvals/pending") && r.ok());
     await owner.goto(`${WEB_URL}/dashboard`);
     await pendingLoaded;
-    await expect(owner.getByTestId("pending-approvals-card")).toHaveCount(0);
+    await expect(owner.getByTestId("pending-approval")).toHaveCount(0);
 
     // 5. A stale decision on v1 is refused.
     const stale = await client.request.post(`${API_URL}/api/documents/${docId}/respond`, {
@@ -125,6 +131,39 @@ test.describe("Deliverable approvals", () => {
       headers: { "x-csrf-token": await csrf(clientCtx) },
     });
     expect(stale.status()).toBe(409);
+
+    await clientCtx.close();
+    await ownerCtx.close();
+  });
+
+  test("the banner counts only what the highlighted deliverable card doesn't cover", async ({ browser }) => {
+    const { context: ownerCtx, page: owner } = await createOwner(browser, "deliv-banner-owner");
+    const { clientEmail, password } = await inviteAndAcceptClient(browser, owner, "deliv-banner-client");
+    const clients = await (await owner.request.get(`${API_URL}/api/clients?limit=100`)).json();
+    const clientRow = (clients.data ?? clients).find((m: { user: { email: string } }) => m.user.email === clientEmail);
+    const headers = { "x-csrf-token": await csrf(ownerCtx) };
+    const project = await (await owner.request.post(`${API_URL}/api/projects`, {
+      data: { name: "Banner Count E2E", clientUserIds: [clientRow.userId] },
+      headers,
+    })).json();
+    const deliverable = await owner.request.post(`${API_URL}/api/documents/link`, {
+      data: { projectId: project.id, title: "Homepage mockup", url: "https://example.com/mockup", sendNow: true },
+      headers,
+    });
+    expect(deliverable.ok()).toBe(true);
+    const decision = await owner.request.post(`${API_URL}/api/tasks?projectId=${project.id}`, {
+      data: { title: "Pick a font", type: "decision", question: "Which font?", options: [{ label: "Serif" }, { label: "Sans" }] },
+      headers,
+    });
+    expect(decision.ok()).toBe(true);
+
+    const { ctx: clientCtx, page: client } = await loginClient(browser, clientEmail, password);
+    await client.goto(`${WEB_URL}/portal/projects/${project.id}`);
+    await expect(client.getByTestId("review-highlight").getByText("Homepage mockup", { exact: true })).toBeVisible();
+    // Only the vote is left for the banner: the deliverable isn't counted twice.
+    await expect(client.getByText("1 more item to review")).toBeVisible();
+    await expect(client.getByText("1 vote", { exact: true })).toBeVisible();
+    await expect(client.getByText(/to approve/)).toHaveCount(0);
 
     await clientCtx.close();
     await ownerCtx.close();

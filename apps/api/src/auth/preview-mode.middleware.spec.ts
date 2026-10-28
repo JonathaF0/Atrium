@@ -97,6 +97,38 @@ describe("PreviewModeMiddleware", () => {
     expect(req.previewMode).toBe(true);
   });
 
+  it("takes on the client's role so role checks see a client, not the owner", async () => {
+    const prisma = buildPrismaMock({
+      userId: "client-9",
+      role: "member",
+      organizationId: "org-1",
+    });
+    const mw = new PreviewModeMiddleware(prisma as any);
+    const cachedMember = { role: "owner", organizationId: "org-1" };
+    const req = buildReq({
+      headers: { "x-preview-as": "client-9" },
+      member: cachedMember,
+    });
+    const next = mock(() => {}) as unknown as NextFunction;
+
+    await mw.use(req as Request, {} as Response, next);
+
+    expect(req.member?.role).toBe("member");
+    // The SessionMiddleware cache must keep the real role.
+    expect(cachedMember.role).toBe("owner");
+  });
+
+  it("keeps the owner role when previewing as themselves", async () => {
+    const prisma = buildPrismaMock(null);
+    const mw = new PreviewModeMiddleware(prisma as any);
+    const req = buildReq({ headers: { "x-preview-as": "owner-1" } });
+    const next = mock(() => {}) as unknown as NextFunction;
+
+    await mw.use(req as Request, {} as Response, next);
+
+    expect(req.member?.role).toBe("owner");
+  });
+
   it("rejects with 401 when requester is not owner or admin", async () => {
     const prisma = buildPrismaMock({
       userId: "client-9",
@@ -124,6 +156,23 @@ describe("PreviewModeMiddleware", () => {
     await expect(mw.use(req as Request, {} as Response, next)).rejects.toThrow(
       "Preview unavailable",
     );
+  });
+
+  it("allows owner to preview portal as themselves (unassigned project preview)", async () => {
+    const prisma = buildPrismaMock({
+      userId: "owner-1",
+      role: "owner",
+      organizationId: "org-1",
+    });
+    const mw = new PreviewModeMiddleware(prisma as any);
+    const req = buildReq({ headers: { "x-preview-as": "owner-1" } });
+    const next = mock(() => {}) as unknown as NextFunction;
+
+    await mw.use(req as Request, {} as Response, next);
+
+    expect(req.user?.id).toBe("owner-1");
+    expect(req.previewMode).toBe(true);
+    expect(next).toHaveBeenCalledTimes(1);
   });
 
   it("rejects with 401 when target is owner or admin (not a client)", async () => {
