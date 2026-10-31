@@ -8,6 +8,7 @@ import { track } from "@/lib/track";
 import { oauthResumeUrl } from "@/lib/oauth-resume";
 import { postAuth } from "@/lib/auth-fetch";
 import { LAST_EMAIL_KEY, magicLinkErrorMessage, safeNextPath } from "@/lib/magic-link";
+import { TwoFactorChallenge, SsoSignIn, needsTwoFactor } from "./two-factor-challenge";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 
@@ -28,6 +29,8 @@ export function LoginForm({ orgName, logoSrc, hideLogo }: LoginFormProps) {
   const [next, setNext] = useState<string | null>(null);
   // Hidden until the server confirms it can send email, so it never offers a link that can't arrive.
   const [linksAvailable, setLinksAvailable] = useState(false);
+  // Set when the password (or an emailed link) was accepted and a code is still needed.
+  const [twoFactorPending, setTwoFactorPending] = useState(false);
 
   useEffect(() => {
     fetch(`${API_URL}/api/sign-in-options`)
@@ -42,7 +45,12 @@ export function LoginForm({ orgName, logoSrc, hideLogo }: LoginFormProps) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setNext(safeNextPath(params.get("next")));
-    const linkError: string | null = magicLinkErrorMessage(params.get("error"));
+    if (params.get("twoFactor") === "1") setTwoFactorPending(true);
+    const errorParam: string | null = params.get("error");
+    const linkError: string | null =
+      errorParam === "sso_not_allowed"
+        ? "Single sign-on is only for members of this workspace. Ask the owner for an invitation."
+        : magicLinkErrorMessage(errorParam);
     if (linkError) setError(linkError);
     try {
       const remembered: string | null = localStorage.getItem(LAST_EMAIL_KEY);
@@ -109,6 +117,12 @@ export function LoginForm({ orgName, logoSrc, hideLogo }: LoginFormProps) {
 
       const result = await postAuth("/sign-in/email", { email, password });
       if (!result.ok) throw new Error(result.message || "Invalid credentials");
+      if (needsTwoFactor(result.data)) {
+        rememberEmail(email);
+        setTwoFactorPending(true);
+        setLoading(false);
+        return;
+      }
 
       // Without a success counterpart, login_failed is uninterpretable: there
       // is no denominator to compute a success rate from.
@@ -133,6 +147,20 @@ export function LoginForm({ orgName, logoSrc, hideLogo }: LoginFormProps) {
           <p className="text-sm text-[var(--muted-foreground)]">Signing you in...</p>
         </div>
       </div>
+    );
+  }
+
+  if (twoFactorPending) {
+    return (
+      <TwoFactorChallenge
+        onCancel={() => setTwoFactorPending(false)}
+        onSignedIn={async () => {
+          track("login_succeeded", { branded: Boolean(orgName), twoFactor: true });
+          setRedirecting(true);
+          const resumeUrl: string | null = oauthResumeUrl(window.location.search, API_URL);
+          window.location.href = resumeUrl ?? next ?? (await setActiveOrgAndRedirect("/portal/projects"));
+        }}
+      />
     );
   }
 
@@ -254,6 +282,8 @@ export function LoginForm({ orgName, logoSrc, hideLogo }: LoginFormProps) {
             </button>
           </>
         )}
+
+        <SsoSignIn email={email} next={next} />
 
         <p className="text-center text-sm text-[var(--muted-foreground)]">
           Don&apos;t have an account?{" "}

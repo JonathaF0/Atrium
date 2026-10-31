@@ -116,6 +116,8 @@ ALTER TABLE "announcement_audience" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "announcement_dismissal" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "announcement_template" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "ticket_announcement" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "two_factor" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "sso_provider" ENABLE ROW LEVEL SECURITY;
 
 -- ─── Revoke direct access from anon and authenticated roles ─────────────────
 -- REVOKE is idempotent -- revoking a privilege that was never granted is a no-op.
@@ -219,5 +221,7 @@ REVOKE ALL ON "announcement_audience" FROM anon, authenticated;
 REVOKE ALL ON "announcement_dismissal" FROM anon, authenticated;
 REVOKE ALL ON "announcement_template" FROM anon, authenticated;
 REVOKE ALL ON "ticket_announcement" FROM anon, authenticated;
+REVOKE ALL ON "two_factor" FROM anon, authenticated;
+REVOKE ALL ON "sso_provider" FROM anon, authenticated;
 
 COMMIT;

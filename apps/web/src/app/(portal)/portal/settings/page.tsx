@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { useSession } from "@/lib/session-context";
 import { useToast } from "@/components/toast";
+import { TwoFactorSettings } from "@/components/two-factor-settings";
 
 /** Stored on the client's contact in the workspace; null when not set. */
 interface ClientProfile {
@@ -237,6 +238,8 @@ export default function PortalSettingsPage() {
           </button>
         </form>
       </div>
+
+      <TwoFactorSettings headingClassName="text-sm font-medium" />
 
       {/* Client Profile Section */}
       <div className="max-w-md">

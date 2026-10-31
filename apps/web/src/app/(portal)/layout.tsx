@@ -14,6 +14,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { serverFetch } from "@/lib/server-api";
 import { logoSrc as buildLogoSrc } from "@/lib/logo-src";
 import { SessionProvider } from "@/lib/session-context";
+import { mustEnrollTwoFactor, TWO_FACTOR_SETUP_PATH } from "@/lib/two-factor";
 
 async function getBranding() {
   try {
@@ -55,6 +56,9 @@ export default async function PortalLayout({
   ]);
   if (!session) {
     redirect(await loginRedirectPath());
+  }
+  if (await mustEnrollTwoFactor()) {
+    redirect(TWO_FACTOR_SETUP_PATH);
   }
 
   const orgName: string | null = org?.name || null;

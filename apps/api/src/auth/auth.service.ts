@@ -11,7 +11,8 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { organization, magicLink, mcp } from "better-auth/plugins";
+import { organization, magicLink, mcp, twoFactor } from "better-auth/plugins";
+import { sso } from "@better-auth/sso";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { PrismaService } from "../prisma/prisma.service";
 import { isAllowedRedirectUri } from "./oauth-redirect";
@@ -33,6 +34,10 @@ import { cookieUrlWarning, secureCookies } from "../common/helpers/secure-cookie
 import { publicApiUrl } from "../common/helpers/public-api-url";
 import { isPrivilegedRole } from "../common/helpers/privileged-role";
 import { SendLimiter } from "./send-limiter";
+import { authSecurityPlugin, ssoSignUpAllowed } from "../security/auth-security.plugin";
+import { recordAuthEvent } from "../security/auth-audit";
+import { SecretBox } from "../security/secret-box";
+import { withSsoSecrets } from "../security/sso-prisma";
 
 interface AdminResetContext {
   capturedUrl: string | null;
@@ -93,6 +98,8 @@ export class AuthService {
     // Lets MCP clients sign in instead of pasting an API key. Opt-out only.
     const mcpOAuthEnabled: boolean =
       this.config.get("MCP_OAUTH_ENABLED", "true") !== "false";
+    // OIDC single sign-on per workspace; off unless the operator turns it on.
+    const ssoEnabled: boolean = this.config.get("SSO_ENABLED") === "true";
 
     // Shared with the CSRF guard so both cookies agree. See secure-cookies.ts.
     const useSecure: boolean = secureCookies();
@@ -211,7 +218,10 @@ export class AuthService {
     // Cast: better-auth >=1.6 makes Auth<Options> invariant, so the concrete
     // instance no longer assigns to the default-typed field.
     this.auth = betterAuth({
-      database: prismaAdapter(this.prisma, { provider: "postgresql" }),
+      database: prismaAdapter(
+        ssoEnabled ? withSsoSecrets(this.prisma, new SecretBox(this.config.getOrThrow("BETTER_AUTH_SECRET"))) : this.prisma,
+        { provider: "postgresql" },
+      ),
       secret: this.config.getOrThrow("BETTER_AUTH_SECRET"),
       baseURL: apiUrl,
       basePath: "/api/auth",
@@ -232,8 +242,8 @@ export class AuthService {
             // Every route that can mint a user funnels through here: the
             // email/password endpoint /accept-invite posts to directly, the
             // onboarding endpoint, and social sign-in. See maySignUp.
-            before: async (user) => {
-              if (!(await this.maySignUp(user.email))) {
+            before: async (user, ctx) => {
+              if (!(await this.maySignUp(user.email)) || !(await ssoSignUpAllowed(this.prisma, user.email, ctx))) {
                 throw new APIError("FORBIDDEN", {
                   message:
                     "Signups are disabled on this instance. Ask the workspace owner for an invitation.",
@@ -297,6 +307,14 @@ export class AuthService {
         // forgotten session can't be used after the user (or an admin) recovers
         // the account.
         revokeSessionsOnPasswordReset: true,
+        onPasswordReset: async ({ user }) => {
+          await recordAuthEvent(this.prisma, {
+            action: "auth.password_reset",
+            userId: user.id,
+            email: user.email,
+            summary: "Reset password from an emailed link",
+          });
+        },
         sendResetPassword: async ({ user, url }) => {
           const ctx = this.adminResetStorage.getStore();
           if (ctx) {
@@ -440,6 +458,23 @@ export class AuthService {
           expiresIn: MAGIC_LINK_EXPIRES_IN_SECONDS,
           sendMagicLink: ({ email, url }) => this.deliverMagicLink(email, url),
         }),
+        // TOTP with backup codes. Passwordless accounts (portal clients who sign
+        // in by link) can enrol too; they confirm with a code instead of a password.
+        twoFactor({
+          issuer: this.config.get("TWO_FACTOR_ISSUER", "Atrium"),
+          allowPasswordless: true,
+        }),
+        authSecurityPlugin({ prisma: this.prisma, webUrl }),
+        ...(ssoEnabled
+          ? [
+              sso({
+                // Membership only ever comes from an invitation, never from the IdP.
+                organizationProvisioning: { disabled: true },
+                domainVerification: { enabled: true },
+                trustEmailVerified: false,
+              }),
+            ]
+          : []),
         ...(mcpOAuthEnabled
           ? [
               mcp({

@@ -34,6 +34,10 @@ model User {
   oauthConsents      OauthConsent[]
   mcpGrants          McpGrant[]
   mcpPendingGrants   McpPendingGrant[]
+  twoFactors         TwoFactor[]
+
+  // Two-factor (Better Auth twoFactor plugin)
+  twoFactorEnabled Boolean? @default(false)
 
   @@map("user")
 }
@@ -86,6 +90,43 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+// Better Auth twoFactor plugin: TOTP secret and backup codes, both encrypted by Better Auth.
+model TwoFactor {
+  id                      String    @id
+  secret                  String
+  backupCodes             String
+  userId                  String
+  verified                Boolean?  @default(true)
+  failedVerificationCount Int?      @default(0)
+  lockedUntil             DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([secret])
+  @@index([userId])
+  @@map("two_factor")
+}
+
+// Better Auth sso plugin (OIDC). Rows are written by Atrium's security settings, never by the
+// plugin's own routes; the client secret inside oidcConfig is encrypted at rest.
+model SsoProvider {
+  id             String   @id
+  issuer         String
+  oidcConfig     String?
+  samlConfig     String?
+  userId         String?
+  providerId     String   @unique
+  organizationId String?
+  domain         String
+  domainVerified Boolean? @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@index([organizationId])
+  @@index([domain])
+  @@map("sso_provider")
 }
 
 model Organization {
