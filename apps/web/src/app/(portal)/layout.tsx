@@ -6,6 +6,7 @@ import { SignOutButton } from "./sign-out-button";
 import { PortalServiceLinks } from "./portal-service-links";
 import { getSession } from "@/lib/auth";
 import { NotificationBell, NotificationProvider } from "@/components/notification-bell";
+import { AnnouncementsNavLink } from "@/components/announcements-nav-link";
 import { DynamicFavicon } from "@/components/dynamic-favicon";
 import { PreviewModeProvider } from "@/lib/preview-mode";
 import { PreviewBanner } from "@/components/preview-banner";
@@ -88,9 +89,16 @@ export default async function PortalLayout({
               href="/portal"
               className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             >
+              Home
+            </Link>
+            <Link
+              href="/portal/projects"
+              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
               Projects
             </Link>
             <PortalServiceLinks />
+            <AnnouncementsNavLink className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]" />
             <Link
               href="/portal/settings"
               className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
