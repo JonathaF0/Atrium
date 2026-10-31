@@ -9,6 +9,12 @@ import type { SmtpConfig } from "./smtp-security";
 
 const MAX_CONCURRENT_SENDS = 2;
 
+/** Optional extras for a send: a Reply-To address and extra headers (threading ids). */
+export interface MailOptions {
+  replyTo?: string;
+  headers?: Record<string, string>;
+}
+
 /** Runs at most `max` tasks at once; a finished task hands its slot straight to the next waiter. */
 function createLimiter(max: number): <T>(task: () => Promise<T>) => Promise<T> {
   let active = 0;
@@ -66,8 +72,9 @@ export class MailService {
     subject: string,
     html: string,
     organizationId?: string,
+    options?: MailOptions,
   ): Promise<{ sent: boolean; viaOrgConfig: boolean }> {
-    return this.limitSend(() => this.deliverWithTimeout(to, subject, html, organizationId));
+    return this.limitSend(() => this.deliverWithTimeout(to, subject, html, organizationId, options));
   }
 
   /**
@@ -79,6 +86,7 @@ export class MailService {
     subject: string,
     html: string,
     organizationId?: string,
+    options?: MailOptions,
   ): Promise<{ sent: boolean; viaOrgConfig: boolean }> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<{ sent: boolean; viaOrgConfig: boolean }>((resolve) => {
@@ -88,7 +96,7 @@ export class MailService {
       }, MailService.sendTimeoutMs);
     });
     try {
-      return await Promise.race([this.deliver(to, subject, html, organizationId), timeout]);
+      return await Promise.race([this.deliver(to, subject, html, organizationId, options), timeout]);
     } finally {
       clearTimeout(timer);
     }
@@ -99,7 +107,9 @@ export class MailService {
     subject: string,
     html: string,
     organizationId?: string,
+    options?: MailOptions,
   ): Promise<{ sent: boolean; viaOrgConfig: boolean }> {
+    const extra = mailExtras(options);
     if (organizationId) {
       try {
         const emailConfig = await this.settingsService.getEffectiveEmailConfig(organizationId);
@@ -115,6 +125,7 @@ export class MailService {
             to,
             subject,
             html,
+            ...extra,
           });
           if (error) {
             this.logResendError(error, to, subject, "DB-configured Resend failed, falling back to env vars");
@@ -135,6 +146,7 @@ export class MailService {
             to,
             subject,
             html,
+            ...extra,
           });
           this.logger.info({ to, subject }, "Email sent via DB-configured SMTP");
           return { sent: true, viaOrgConfig: true };
@@ -157,6 +169,7 @@ export class MailService {
       to,
       subject,
       html,
+      ...extra,
     });
     if (error) {
       this.logResendError(error, to, subject, "Email not sent: env-var Resend failed");
@@ -170,4 +183,13 @@ export class MailService {
   private logResendError(error: { name: string; message: string }, to: string, subject: string, msg: string): void {
     this.logger.error({ errorName: error.name, error: error.message, to, subject }, msg);
   }
+}
+
+/** Both Resend and nodemailer accept `replyTo` and `headers` under these names. */
+function mailExtras(options: MailOptions | undefined): { replyTo?: string; headers?: Record<string, string> } {
+  if (!options) return {};
+  return {
+    ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+    ...(options.headers && Object.keys(options.headers).length > 0 ? { headers: options.headers } : {}),
+  };
 }
