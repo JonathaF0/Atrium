@@ -16,6 +16,7 @@ import {
 import type { Response } from "express";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { calculateInvoiceTotal } from "../payments/invoice-total";
 import { FilesService, INVOICE_ALLOWED_MIMES, MAX_UPLOAD_BYTES, type TempUploadedFile } from "../files/files.service";
 import { TempFileInterceptor } from "../files/temp-file.interceptor";
 import {
@@ -153,8 +154,7 @@ export class InvoicesController {
       { header: "Type", value: (r) => r.type },
       { header: "Amount", value: (r) => {
         if (r.amount != null) return (r.amount / 100).toFixed(2);
-        const total = r.lineItems.reduce((sum, li) => sum + li.quantity * li.unitPrice, 0);
-        return (total / 100).toFixed(2);
+        return (calculateInvoiceTotal(r) / 100).toFixed(2);
       }},
       { header: "Due Date", value: (r) => r.dueDate?.toISOString().split("T")[0] },
       { header: "Project", value: (r) => r.project?.name },

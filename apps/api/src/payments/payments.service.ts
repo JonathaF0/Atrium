@@ -14,7 +14,7 @@ import { StripeService } from "../billing/stripe.service";
 import { SettingsService } from "../settings/settings.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { ContactSyncService } from "../contact-sync/contact-sync.service";
-import { calculateInvoiceTotal } from "./invoice-total";
+import { calculateInvoiceTax, calculateInvoiceTotal } from "./invoice-total";
 import { CLIENT_HIDDEN_STATUSES } from "../invoices/invoices.service";
 import { publicApiUrl } from "../common/helpers/public-api-url";
 import { getCurrency } from "../common/helpers/currency";
@@ -508,6 +508,13 @@ export class PaymentsService {
             },
             quantity: li.quantity,
           }));
+    const taxCents = invoice.type === "uploaded" ? 0 : calculateInvoiceTax(invoice.lineItems);
+    if (taxCents > 0 && invoice.lineItems.length > 0) {
+      lineItems.push({
+        price_data: { currency: this.currency, product_data: { name: "Tax" }, unit_amount: taxCents },
+        quantity: 1,
+      });
+    }
 
     const rawMethods = settings?.stripePaymentMethods ?? [];
     const paymentMethodTypes = (rawMethods.length > 0 ? rawMethods : ["card"]) as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];

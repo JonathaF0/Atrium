@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { CALENDAR_EVENT_TYPES, type CalendarEvent } from "@atrium/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { calculateInvoiceTotal } from "../payments/invoice-total";
 import { CalendarQueryDto } from "./calendar.dto";
 
 export type { CalendarEvent };
@@ -111,14 +112,14 @@ export class CalendarService {
               amount: true,
               projectId: true,
               project: { select: { name: true } },
-              lineItems: { select: { quantity: true, unitPrice: true } },
+              lineItems: { select: { quantity: true, unitPrice: true, taxRateBps: true } },
             },
           })
         : Promise.resolve([] as Array<{
             id: string; invoiceNumber: string; status: string; dueDate: Date | null;
             amount: number | null; projectId: string | null;
             project: { name: string } | null;
-            lineItems: Array<{ quantity: number; unitPrice: number }>;
+            lineItems: Array<{ quantity: number; unitPrice: number; taxRateBps: number }>;
           }>),
     ]);
 
@@ -164,7 +165,7 @@ export class CalendarService {
 
     for (const inv of invoices) {
       if (!inv.dueDate) continue;
-      const computed = inv.lineItems.reduce((s, li) => s + li.unitPrice * li.quantity, 0);
+      const computed = calculateInvoiceTotal({ type: "itemized", lineItems: inv.lineItems });
       events.push({
         type: "invoice_due",
         id: inv.id,

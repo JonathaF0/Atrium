@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsInt,
   Min,
+  Max,
   IsArray,
   ArrayMinSize,
   ArrayMaxSize,
@@ -29,6 +30,13 @@ export class LineItemDto {
   @IsInt()
   @Min(0)
   unitPrice!: number;
+
+  // Basis points (825 = 8.25%). Omitted or 0 means the line is not taxed.
+  @IsInt()
+  @Min(0)
+  @Max(10000)
+  @IsOptional()
+  taxRateBps?: number;
 }
 
 export class CreateInvoiceDto {

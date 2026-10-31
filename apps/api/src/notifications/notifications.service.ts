@@ -221,7 +221,7 @@ export class NotificationsService {
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: {
-        lineItems: { select: { quantity: true, unitPrice: true } },
+        lineItems: { select: { quantity: true, unitPrice: true, taxRateBps: true } },
         project: { select: { id: true, name: true } },
       },
     });
@@ -566,7 +566,7 @@ export class NotificationsService {
     const invoice = await this.prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: {
-        lineItems: { select: { quantity: true, unitPrice: true } },
+        lineItems: { select: { quantity: true, unitPrice: true, taxRateBps: true } },
       },
     });
     if (!invoice) return;

@@ -5,6 +5,18 @@ import { getCurrency } from "../common/helpers/currency";
 import { PrismaService } from "../prisma/prisma.service";
 import PDFDocument from "pdfkit";
 import { PassThrough } from "stream";
+import { calculateInvoiceTax } from "../payments/invoice-total";
+import {
+  drawAmountLine,
+  drawDocumentHeader,
+  drawItemRow,
+  drawItemTableHeader,
+  drawMetaRow,
+  drawRule,
+  ensureSpace,
+  formatTaxRate,
+  loadPdfBranding,
+} from "./pdf-layout";
 
 @Injectable()
 export class InvoicePdfService {
@@ -23,18 +35,7 @@ export class InvoicePdfService {
     });
     if (!invoice) throw new NotFoundException("Invoice not found");
 
-    const org = await this.prisma.organization.findUnique({
-      where: { id: orgId },
-      select: { name: true },
-    });
-
-    const branding = await this.prisma.branding.findUnique({
-      where: { organizationId: orgId },
-      select: { primaryColor: true },
-    });
-
-    const primaryColor = branding?.primaryColor || "#2563eb";
-    const orgName = org?.name || "Organization";
+    const brand = await loadPdfBranding(this.prisma, orgId);
 
     const currency: string = getCurrency(this.config);
     const money = (cents: number): string => formatMoney(cents, currency);
@@ -42,73 +43,47 @@ export class InvoicePdfService {
     const stream = new PassThrough();
     doc.pipe(stream);
 
-    // Header
-    doc.fontSize(24).fillColor(primaryColor).text(orgName, 50, 50);
-    doc.fontSize(10).fillColor("#6b7280").text("INVOICE", 400, 50, { align: "right" });
-    doc.fontSize(18).fillColor("#111827").text(invoice.invoiceNumber, 400, 65, { align: "right" });
+    drawDocumentHeader(doc, brand, "INVOICE", invoice.invoiceNumber);
 
     // Meta info
     const metaY = 110;
-    doc.fontSize(9).fillColor("#6b7280");
-    doc.text("Date", 50, metaY);
-    doc.text("Status", 150, metaY);
-    if (invoice.dueDate) doc.text("Due Date", 250, metaY);
-    if (invoice.project) doc.text("Project", 370, metaY);
+    const meta = [
+      { label: "Date", value: new Date(invoice.createdAt).toLocaleDateString(), x: 50 },
+      { label: "Status", value: invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1), x: 150 },
+    ];
+    if (invoice.dueDate) meta.push({ label: "Due Date", value: new Date(invoice.dueDate).toLocaleDateString(), x: 250 });
+    if (invoice.project) meta.push({ label: "Project", value: invoice.project.name, x: 370 });
+    drawMetaRow(doc, metaY, meta);
 
-    doc.fontSize(10).fillColor("#111827");
-    doc.text(new Date(invoice.createdAt).toLocaleDateString(), 50, metaY + 14);
-    doc.text(invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1), 150, metaY + 14);
-    if (invoice.dueDate) {
-      doc.text(new Date(invoice.dueDate).toLocaleDateString(), 250, metaY + 14);
-    }
-    if (invoice.project) {
-      doc.text(invoice.project.name, 370, metaY + 14);
-    }
-
-    // Divider
     const tableStart = metaY + 50;
-    doc.moveTo(50, tableStart).lineTo(545, tableStart).strokeColor("#e5e7eb").lineWidth(1).stroke();
+    drawRule(doc, tableStart);
+    let y = drawItemTableHeader(doc, tableStart + 10);
 
-    // Table header
-    const headerY = tableStart + 10;
-    doc.fontSize(9).fillColor("#6b7280");
-    doc.text("Description", 50, headerY);
-    doc.text("Qty", 340, headerY, { width: 50, align: "right" });
-    doc.text("Unit Price", 400, headerY, { width: 70, align: "right" });
-    doc.text("Total", 475, headerY, { width: 70, align: "right" });
-
-    doc.moveTo(50, headerY + 16).lineTo(545, headerY + 16).strokeColor("#e5e7eb").lineWidth(0.5).stroke();
-
-    // Line items
-    let y = headerY + 26;
-    let grandTotal = 0;
-    const pageBottom = doc.page.height - doc.page.margins.bottom;
-
+    let subtotal = 0;
     for (const item of invoice.lineItems) {
-      if (y + 20 > pageBottom) {
-        doc.addPage();
-        y = doc.page.margins.top;
-      }
-
+      y = ensureSpace(doc, y, 20);
       const lineTotal = item.quantity * item.unitPrice;
-      grandTotal += lineTotal;
-
-      doc.fontSize(10).fillColor("#111827");
-      doc.text(item.description, 50, y, { width: 280 });
-      doc.text(String(item.quantity), 340, y, { width: 50, align: "right" });
-      doc.text(money(item.unitPrice), 400, y, { width: 70, align: "right" });
-      doc.text(money(lineTotal), 475, y, { width: 70, align: "right" });
-
+      subtotal += lineTotal;
+      const rate = item.taxRateBps ? ` (tax ${formatTaxRate(item.taxRateBps)})` : "";
+      drawItemRow(doc, y, {
+        description: item.description + rate,
+        quantity: String(item.quantity),
+        unitPrice: money(item.unitPrice),
+        total: money(lineTotal),
+      });
       y += 20;
     }
 
-    // Total line
-    doc.moveTo(350, y + 5).lineTo(545, y + 5).strokeColor("#e5e7eb").lineWidth(1).stroke();
+    const tax = calculateInvoiceTax(invoice.lineItems);
+    drawRule(doc, y + 5, 350);
     y += 15;
-    doc.fontSize(11).fillColor("#111827").font("Helvetica-Bold");
-    doc.text("Total", 350, y, { width: 120, align: "right" });
-    doc.text(money(grandTotal), 475, y, { width: 70, align: "right" });
-    doc.font("Helvetica");
+    if (tax > 0) {
+      drawAmountLine(doc, y, "Subtotal", money(subtotal));
+      y += 16;
+      drawAmountLine(doc, y, "Tax", money(tax));
+      y += 18;
+    }
+    drawAmountLine(doc, y, "Total", money(subtotal + tax), true);
 
     // Notes
     if (invoice.notes) {

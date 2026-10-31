@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { apiFetch } from "@/lib/api";
-import { currencySymbol, formatCurrency, invoiceTotal } from "@/lib/format";
+import { currencySymbol, formatCurrency, formatTaxRate, invoiceTax, invoiceTotal } from "@/lib/format";
+import { TaxRateSelect } from "@/components/tax-rate-select";
 import { useCurrency } from "@/lib/app-config";
 import { useConfirm } from "@/components/confirm-modal";
 import { useToast } from "@/components/toast";
@@ -19,6 +20,7 @@ interface LineItem {
   description: string;
   quantity: number;
   unitPrice: number;
+  taxRateBps?: number;
 }
 
 interface InvoiceListItem {
@@ -329,6 +331,7 @@ export function InvoicesSection({
         description: li.description,
         quantity: li.quantity,
         unitPrice: li.unitPrice,
+        taxRateBps: li.taxRateBps ?? 0,
       })),
     );
     setEditNotes(inv.notes || "");
@@ -423,10 +426,8 @@ export function InvoicesSection({
     });
   }, []);
 
-  const newTotal = newLineItems.reduce(
-    (sum, item) => sum + item.quantity * item.unitPrice,
-    0,
-  );
+  const newTotal = invoiceTotal({ type: "itemized", lineItems: newLineItems });
+  const newTax = invoiceTax(newLineItems);
 
   const isCreateSubmitting = savingDraft || sending;
   const isUploadSubmitting = uploadSavingDraft || uploadSending;
@@ -615,6 +616,11 @@ export function InvoicesSection({
                           className="w-full pl-7 pr-3 py-1.5 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm"
                         />
                       </div>
+                      <TaxRateSelect
+                        value={item.taxRateBps ?? 0}
+                        onChange={(bps) => updateNewLineItem(index, "taxRateBps", bps)}
+                        className="w-28 px-2 py-1.5 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm shrink-0"
+                      />
                       <span className="text-sm font-medium shrink-0">
                         {formatCurrency(item.quantity * item.unitPrice, currency)}
                       </span>
@@ -634,6 +640,9 @@ export function InvoicesSection({
 
             <div className="flex justify-end">
               <div className="text-right">
+                {newTax > 0 && (
+                  <p className="text-xs text-[var(--muted-foreground)]">Includes tax {formatCurrency(newTax, currency)}</p>
+                )}
                 <span className="text-sm text-[var(--muted-foreground)]">Total</span>
                 <p className="text-xl font-bold">{formatCurrency(newTotal, currency)}</p>
               </div>
@@ -950,6 +959,11 @@ export function InvoicesSection({
                                     className="w-full pl-7 pr-3 py-1.5 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm"
                                   />
                                 </div>
+                                <TaxRateSelect
+                                  value={item.taxRateBps ?? 0}
+                                  onChange={(bps) => updateEditItem(index, "taxRateBps", bps)}
+                                  className="w-28 px-2 py-1.5 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm shrink-0"
+                                />
                                 <span className="text-sm font-medium shrink-0">
                                   {formatCurrency(item.quantity * item.unitPrice, currency)}
                                 </span>
@@ -1029,7 +1043,12 @@ export function InvoicesSection({
                               <tbody>
                                 {inv.lineItems.map((li, idx) => (
                                   <tr key={li.id || idx} className="border-t border-[var(--border)]">
-                                    <td className="px-3 py-2">{li.description}</td>
+                                    <td className="px-3 py-2">
+                                      {li.description}
+                                      {li.taxRateBps ? (
+                                        <span className="ml-1 text-xs text-[var(--muted-foreground)]">(tax {formatTaxRate(li.taxRateBps)})</span>
+                                      ) : null}
+                                    </td>
                                     <td className="px-3 py-2 text-right">{li.quantity}</td>
                                     <td className="px-3 py-2 text-right">{formatCurrency(li.unitPrice, currency)}</td>
                                     <td className="px-3 py-2 text-right font-medium">
@@ -1039,6 +1058,12 @@ export function InvoicesSection({
                                 ))}
                               </tbody>
                               <tfoot>
+                                {invoiceTax(inv.lineItems) > 0 && (
+                                  <tr className="border-t border-[var(--border)]">
+                                    <td colSpan={3} className="px-3 py-2 text-right text-[var(--muted-foreground)]">Tax</td>
+                                    <td className="px-3 py-2 text-right">{formatCurrency(invoiceTax(inv.lineItems), currency)}</td>
+                                  </tr>
+                                )}
                                 <tr className="border-t border-[var(--border)] bg-[var(--muted)]">
                                   <td colSpan={3} className="px-3 py-2 text-right font-medium">Total</td>
                                   <td className="px-3 py-2 text-right font-bold">{formatCurrency(total, currency)}</td>

@@ -144,7 +144,7 @@ export class ContactRevenueService {
         COALESCE(i."paidAmount", x.total) AS "paidCents"
       FROM "invoice" i
       LEFT JOIN LATERAL (
-        SELECT SUM(li.quantity * li."unitPrice") AS s FROM "invoice_line_item" li WHERE li."invoiceId" = i.id
+        SELECT SUM(li.quantity * li."unitPrice" + ROUND(li.quantity * li."unitPrice" * li."taxRateBps" / 10000.0)) AS s FROM "invoice_line_item" li WHERE li."invoiceId" = i.id
       ) li ON TRUE
       CROSS JOIN LATERAL (
         SELECT CASE WHEN i.type = 'uploaded' THEN COALESCE(i.amount, 0) ELSE COALESCE(li.s, 0) END AS total

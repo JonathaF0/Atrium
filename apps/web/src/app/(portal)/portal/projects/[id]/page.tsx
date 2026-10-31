@@ -91,7 +91,7 @@ interface InvoiceSummary {
   amount?: number | null;
   dueDate?: string | null;
   notes?: string | null;
-  lineItems: { id: string; description: string; quantity: number; unitPrice: number }[];
+  lineItems: { id: string; description: string; quantity: number; unitPrice: number; taxRateBps?: number }[];
 }
 
 interface TimelineEntry {
