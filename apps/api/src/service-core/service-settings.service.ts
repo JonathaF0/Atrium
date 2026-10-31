@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import type { Prisma, ServiceSettings } from "@atrium/database";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -34,7 +35,13 @@ export class ServiceSettingsService {
     tx?: Prisma.TransactionClient,
   ): Promise<{ number: number; prefix: string }> {
     const client = tx ?? this.prisma;
-    await client.serviceSettings.upsert({ where: { organizationId }, create: { organizationId }, update: {} });
+    // ON CONFLICT rather than upsert: two first-ever calls racing would otherwise hit a unique
+    // violation, which inside a transaction aborts it.
+    await client.$executeRaw`
+      INSERT INTO "service_settings" ("id", "organizationId", "updatedAt")
+      VALUES (${randomUUID()}, ${organizationId}, now())
+      ON CONFLICT ("organizationId") DO NOTHING
+    `;
     if (sequence === "ticket") {
       const row = await client.serviceSettings.update({
         where: { organizationId },
