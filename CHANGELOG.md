@@ -2,6 +2,37 @@
 
 All notable changes to Atrium will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **Helpdesk** — Clients open support tickets in the portal (category, impact and urgency, attachments), reply, reopen, close and rate them; company admins see all of their company's tickets. Staff work a queue with views (unassigned, mine, triage, SLA risk), filters and bulk actions, internal notes, canned responses with variables, labels, links, merge and split, time logging into the existing invoicing flow, and conversion to projects and tasks. See [docs/helpdesk.md](docs/helpdesk.md).
+- **SLA policies** with business hours and holidays: the clock pauses while waiting on the client, with warnings and breach escalations.
+- **Ticket automation** — rules on create and update, auto-close for resolved and waiting tickets, and auto-acknowledgement emails.
+- **Email to ticket** through a signed webhook or an IMAP mailbox. Replies thread by message headers and a private ticket token; unknown senders go to a triage queue and never get portal access.
+- **Knowledge base** — Collections and articles with public, all-clients, selected-companies and staff-only visibility, a draft/review/publish workflow, version history, owners and review reminders, full-text search, "Was this helpful?", related articles and view counts. Article suggestions while clients write a ticket, and drafting an article from a resolved ticket. Optional public help center at `/help/<workspace>`. See [docs/knowledge-base.md](docs/knowledge-base.md).
+- **Client documentation** per company (network, onboarding, runbooks, vendors, licenses) with password-vault links. Content that looks like a secret is refused.
+- **Service catalog and estimates** — Catalog items and bundles with internal cost and margin; estimates with optional items, discounts, tax, deposits, recurring services, versions, expiry reminders and a branded PDF. Clients accept with a signature in the portal; one click converts an accepted estimate into a project, draft invoices (full, deposit or milestones), paused recurring schedules and a signed quote document. Optional AI drafting, off by default. See [docs/estimates.md](docs/estimates.md).
+- **Tax rates** and per-line tax on invoices (totals, PDF, CSV, Stripe Checkout).
+- **Recurring billing** — Schedules that invoice clients weekly to yearly, with first-period proration, automatic sending, optional card auto-charge and overdue reminders (`invoice.overdue` event). Clients see their plans and invoices under Billing in the portal.
+- **Assets and licenses** per client company, with CSV import/export, renewal alerts and a sync API for RMM/PSA tools.
+- **Contracts and service agreements** with covered hours, overage rate, SLA policy, renewal reminders and auto-renewal. Ticket time counts against covered hours while they last. See [docs/client-services.md](docs/client-services.md).
+- **Announcements and service status** — News, maintenance windows, incident timelines and security advisories, targeted at all clients, selected companies, contract types or asset vendors, with a recipient preview. Scheduled publishing, auto-expiry, maintenance reminders, email, push and in-app delivery. Optional public status page with RSS.
+- **Client dashboard** — The portal opens on open tickets, outstanding invoices, upcoming renewals, recent updates, announcements and quick actions.
+- **Reports** for ticket volume, SLA compliance, response and resolution times, satisfaction, hours against contracts, and revenue and aging, with CSV export.
+- **Two-factor authentication** (authenticator app and backup codes) for staff and clients, enforceable per workspace. Optional OpenID Connect single sign-on per workspace (`SSO_ENABLED`).
+- **Audit log** under Settings, covering sign-ins, permission changes, exports and billing actions, with retention (`AUDIT_LOG_RETENTION_DAYS`).
+- **Company admins** — Mark a portal client as company admin to let them see their whole company's records.
+- **Sample content** for an IT services workspace: ticket categories, an SLA policy, a service catalog, draft articles, canned responses and announcement templates. `bun run setup` loads it into existing workspaces; owners can load it from Settings → General, or run `bun run db:seed:samples`.
+- New MCP tools for tickets and the knowledge base; tickets and articles in global search.
+- Slack, Discord and webhook events for tickets, estimates, announcements and overdue invoices, with clearer Slack and Discord messages.
+- Optional malware scanning of uploads with ClamAV (`CLAMAV_HOST`).
+
+### Changed
+
+- `/portal` is now the client dashboard instead of redirecting to projects.
+- `bun run db:push` also creates the knowledge base full-text index.
+
 ## [1.12.1] — 2026-10-22
 
 ### Security
