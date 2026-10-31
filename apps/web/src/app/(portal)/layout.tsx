@@ -100,6 +100,18 @@ export default async function PortalLayout({
             <PortalServiceLinks />
             <AnnouncementsNavLink className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]" />
             <Link
+              href="/portal/kb"
+              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              Help center
+            </Link>
+            <Link
+              href="/portal/docs"
+              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              Documentation
+            </Link>
+            <Link
               href="/portal/settings"
               className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             >
