@@ -80,6 +80,7 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { ValidationPipe } from "@nestjs/common";
 import type { CorsOptionsDelegate } from "@nestjs/common/interfaces/external/cors-options.interface";
+import { json } from "express";
 import type { Request } from "express";
 import { isPublicOAuthPath } from "./common/helpers/public-oauth-cors";
 import { Logger } from "nestjs-pino";
@@ -101,6 +102,11 @@ async function bootstrap() {
   expressApp.set("trust proxy", true);
 
   app.use(cookieParser());
+  // Inbound helpdesk email can carry attachments: that route alone gets a larger JSON limit (raw body kept for its signature).
+  app.use(
+    "/api/helpdesk/inbound",
+    json({ limit: "30mb", verify: (req: Request, _res, buf: Buffer) => void ((req as Request & { rawBody?: Buffer }).rawBody = buf) }),
+  );
   app.use(compression({ filter: shouldCompress }));
 
   app.use(
