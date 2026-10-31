@@ -118,6 +118,12 @@ export default async function PortalLayout({
               Estimates
             </Link>
             <Link
+              href="/portal/billing"
+              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              Billing
+            </Link>
+            <Link
               href="/portal/settings"
               className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             >

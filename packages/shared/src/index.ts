@@ -197,6 +197,7 @@ export const INTEGRATION_EVENT_GROUPS = [
     events: [
       { id: "invoice.sent", label: "Invoice sent" },
       { id: "invoice.paid", label: "Invoice paid" },
+      { id: "invoice.overdue", label: "Overdue reminder sent" },
     ],
   },
   {

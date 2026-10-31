@@ -11,6 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { ContactSyncService } from "../contact-sync/contact-sync.service";
 import { calculateInvoiceTotal } from "../payments/invoice-total";
+import { canSeeScheduleInvoice, visibleScheduleIds } from "../recurring-invoices/recurring-visibility";
 import { paginationArgs, paginatedResponse } from "../common";
 import { CreateInvoiceDto, CreateUploadedInvoiceDto, UpdateInvoiceDto, InvoiceListQueryDto } from "./invoices.dto";
 
@@ -271,10 +272,14 @@ export class InvoicesService {
       projectIds = clientProjects.map((pc) => pc.projectId);
     }
 
+    // Invoices from a billing schedule addressed to the client need no project.
+    const scheduleIds = !isPrivileged && !projectId ? await visibleScheduleIds(this.prisma, userId, orgId) : [];
     const where = {
       organizationId: orgId,
-      projectId: { in: projectIds },
       status: { notIn: CLIENT_HIDDEN_STATUSES },
+      ...(scheduleIds.length > 0
+        ? { OR: [{ projectId: { in: projectIds } }, { recurringInvoiceId: { in: scheduleIds } }] }
+        : { projectId: { in: projectIds } }),
     };
 
     const [data, total] = await Promise.all([
@@ -302,14 +307,10 @@ export class InvoicesService {
     if (!invoice) throw new NotFoundException("Invoice not found");
 
     if (!isPrivileged) {
-      if (invoice.projectId) {
-        const assignment = await this.prisma.projectClient.findFirst({
-          where: { projectId: invoice.projectId, userId },
-        });
-        if (!assignment) {
-          throw new ForbiddenException("Not assigned to this project");
-        }
-      } else {
+      const assignment = invoice.projectId
+        ? await this.prisma.projectClient.findFirst({ where: { projectId: invoice.projectId, userId } })
+        : null;
+      if (!assignment && !(await canSeeScheduleInvoice(this.prisma, invoice.recurringInvoiceId, userId, orgId))) {
         throw new ForbiddenException("Not assigned to this project");
       }
     }

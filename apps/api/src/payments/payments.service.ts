@@ -16,6 +16,7 @@ import { NotificationsService } from "../notifications/notifications.service";
 import { ContactSyncService } from "../contact-sync/contact-sync.service";
 import { calculateInvoiceTax, calculateInvoiceTotal } from "./invoice-total";
 import { CLIENT_HIDDEN_STATUSES } from "../invoices/invoices.service";
+import { canSeeScheduleInvoice } from "../recurring-invoices/recurring-visibility";
 import { publicApiUrl } from "../common/helpers/public-api-url";
 import { getCurrency } from "../common/helpers/currency";
 
@@ -75,7 +76,7 @@ export class PaymentsService {
     return !!this.config.get<string>("STRIPE_CONNECT_CLIENT_ID");
   }
 
-  private async getStripeConfig(orgId: string): Promise<StripeConfig> {
+  async getStripeConfig(orgId: string): Promise<StripeConfig> {
     const settings = await this.prisma.systemSettings.findUnique({
       where: { organizationId: orgId },
     });
@@ -457,13 +458,11 @@ export class PaymentsService {
 
     if (!invoice) throw new NotFoundException("Invoice not found");
 
-    if (invoice.projectId) {
-      const assignment = await this.prisma.projectClient.findFirst({
-        where: { projectId: invoice.projectId, userId },
-      });
-      if (!assignment) throw new ForbiddenException("Not assigned to this project");
-    } else {
-      throw new ForbiddenException("Invoice has no associated project");
+    const assignment = invoice.projectId
+      ? await this.prisma.projectClient.findFirst({ where: { projectId: invoice.projectId, userId } })
+      : null;
+    if (!assignment && !(await canSeeScheduleInvoice(this.prisma, invoice.recurringInvoiceId, userId, orgId))) {
+      throw new ForbiddenException(invoice.projectId ? "Not assigned to this project" : "Invoice has no associated project");
     }
 
     if (!["sent", "overdue"].includes(invoice.status)) {
@@ -672,20 +671,33 @@ export class PaymentsService {
     });
     if (!invoice) return;
 
-    const totalCents = calculateInvoiceTotal(invoice);
+    await this.recordStripePayment(
+      invoice,
+      (session.amount_total as number) ?? calculateInvoiceTotal(invoice),
+      (session.payment_intent as string) ?? null,
+    );
+  }
 
-    // Idempotent update: only mark as paid if not already paid
+  /**
+   * Marks an invoice paid from a confirmed Stripe payment (Checkout or an
+   * off-session charge). Idempotent: returns false when it was already paid.
+   */
+  async recordStripePayment(
+    invoice: { id: string; invoiceNumber: string },
+    amountCents: number,
+    paymentIntentId: string | null,
+  ): Promise<boolean> {
     const result = await this.prisma.invoice.updateMany({
       where: { id: invoice.id, status: { not: "paid" } },
       data: {
         status: "paid",
         paidAt: new Date(),
-        paidAmount: (session.amount_total as number) ?? totalCents,
-        stripePaymentIntentId: (session.payment_intent as string) ?? null,
+        paidAmount: amountCents,
+        stripePaymentIntentId: paymentIntentId,
       },
     });
 
-    if (result.count === 0) return; // Already processed
+    if (result.count === 0) return false; // Already processed
 
     this.logger.log(`Invoice ${invoice.invoiceNumber} marked as paid via Stripe`);
     this.notifications.notifyInvoicePaid(invoice.id);
@@ -695,5 +707,6 @@ export class PaymentsService {
       Sentry.captureException(err);
       this.logger.error("Failed to record invoice paid on contact", err);
     }
+    return true;
   }
 }

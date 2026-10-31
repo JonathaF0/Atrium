@@ -15,6 +15,7 @@ import {
   BookOpen,
   Calculator,
   Package,
+  Repeat,
 } from "lucide-react";
 
 const navItems = [
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/dashboard/kb", label: "Knowledge base", icon: BookOpen },
   { href: "/dashboard/estimates", label: "Estimates", icon: Calculator },
   { href: "/dashboard/catalog", label: "Catalog", icon: Package },
+  { href: "/dashboard/invoices/recurring", label: "Recurring billing", icon: Repeat },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
