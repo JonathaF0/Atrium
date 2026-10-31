@@ -13,7 +13,7 @@ import {
   FileSignature,
   Megaphone,
   BookOpen,
-  FileSignature,
+  Calculator,
   Package,
 } from "lucide-react";
 
@@ -26,7 +26,7 @@ const navItems = [
   { href: "/dashboard/assets", label: "Assets", icon: HardDrive },
   { href: "/dashboard/announcements", label: "Announcements", icon: Megaphone },
   { href: "/dashboard/kb", label: "Knowledge base", icon: BookOpen },
-  { href: "/dashboard/estimates", label: "Estimates", icon: FileSignature },
+  { href: "/dashboard/estimates", label: "Estimates", icon: Calculator },
   { href: "/dashboard/catalog", label: "Catalog", icon: Package },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
