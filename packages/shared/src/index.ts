@@ -350,10 +350,11 @@ export type TicketSource = (typeof TICKET_SOURCES)[number];
 export const TICKET_QUEUE_VIEWS = ["all", "unassigned", "mine", "triage", "sla_risk", "open", "closed"] as const;
 export type TicketQueueView = (typeof TICKET_QUEUE_VIEWS)[number];
 
-export interface SlaTarget {
+// Type aliases (not interfaces) so they are assignable to Prisma's Json input.
+export type SlaTarget = {
   firstResponseMins: number;
   resolutionMins: number;
-}
+};
 export type SlaTargets = Record<TicketPriority, SlaTarget>;
 
 export const DEFAULT_SLA_TARGETS: SlaTargets = {
