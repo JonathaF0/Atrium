@@ -21,6 +21,7 @@ echo "Database ready."
 
 # Apply partial unique index on time_entry (one running entry per user)
 DATABASE_URL="$MIGRATION_URL" bun run ./packages/database/scripts/migrate-time-entry-running-unique.ts || true
+DATABASE_URL="$MIGRATION_URL" bun run ./packages/database/scripts/migrate-kb-fts.ts || true
 
 if [ "${SUPABASE}" = "true" ]; then
   echo "Applying Row Level Security..."

@@ -65,6 +65,8 @@ async function run() {
   console.log("\nPushing database schema...");
   await $`bun run ./scripts/ensure-extensions.ts`.cwd(dbDir);
   await $`bunx prisma db push`.cwd(dbDir);
+  await $`bun run ./scripts/migrate-time-entry-running-unique.ts`.cwd(dbDir);
+  await $`bun run ./scripts/migrate-kb-fts.ts`.cwd(dbDir);
 
   // 6. Seed demo data
   console.log("\nSeeding demo data...");

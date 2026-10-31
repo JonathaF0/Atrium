@@ -73,6 +73,7 @@ async function main() {
 
   try {
     await $`bun run ./scripts/migrate-time-entry-running-unique.ts`.cwd(dbDir).quiet();
+    await $`bun run ./scripts/migrate-kb-fts.ts`.cwd(dbDir).quiet();
   } catch (err) {
     console.warn("Warning: Could not apply time_entry running unique index:", err);
   }
