@@ -1,8 +1,8 @@
 import type { IntegrationType } from "@atrium/shared";
 import type { IntegrationPayload } from "./integration-payload";
+import { eventColor, eventFacts, eventLabel } from "./event-format";
 
 const DETAIL_LIMIT = 1000;
-const DISCORD_COLOR = 0x6366f1;
 
 function truncate(text: string, limit: number = DETAIL_LIMIT): string {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
@@ -18,12 +18,19 @@ function joinParts(parts: Array<string | undefined>): string {
 }
 
 function slackBody(p: IntegrationPayload): object {
-  const context: string = joinParts([p.project?.name, p.actor?.name, p.workspace.name]);
+  const context: string = joinParts([eventLabel(p.event), p.project?.name, p.actor?.name, p.workspace.name]);
   const blocks: object[] = [
     { type: "section", text: { type: "mrkdwn", text: `*${slackEscape(p.title)}*` } },
   ];
   if (p.detail) {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: slackEscape(truncate(p.detail)) } });
+  }
+  const facts = eventFacts(p.data);
+  if (facts.length > 0) {
+    blocks.push({
+      type: "section",
+      fields: facts.map((f) => ({ type: "mrkdwn", text: `*${slackEscape(f.name)}*\n${slackEscape(f.value)}` })),
+    });
   }
   blocks.push(
     { type: "context", elements: [{ type: "mrkdwn", text: slackEscape(context) }] },
@@ -36,6 +43,7 @@ function slackBody(p: IntegrationPayload): object {
 }
 
 function discordBody(p: IntegrationPayload): object {
+  const facts = eventFacts(p.data);
   return {
     username: "Atrium",
     // Client-written text must never turn into @everyone or role pings.
@@ -45,9 +53,10 @@ function discordBody(p: IntegrationPayload): object {
         title: truncate(p.title, 256),
         url: p.url,
         description: p.detail ? truncate(p.detail) : undefined,
-        color: DISCORD_COLOR,
+        color: eventColor(p.event),
+        fields: facts.length > 0 ? facts.map((f) => ({ name: truncate(f.name, 256), value: truncate(f.value, 1024), inline: true })) : undefined,
         author: p.actor ? { name: truncate(p.actor.name, 256) } : undefined,
-        footer: { text: truncate(joinParts([p.project?.name, p.workspace.name]), 2048) },
+        footer: { text: truncate(joinParts([eventLabel(p.event), p.project?.name, p.workspace.name]), 2048) },
         timestamp: p.createdAt,
       },
     ],
