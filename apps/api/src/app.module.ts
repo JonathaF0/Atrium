@@ -40,6 +40,7 @@ import { ContactsModule } from "./contacts/contacts.module";
 import { OrganizationModule } from "./organization/organization.module";
 import { ServiceCoreModule } from "./service-core/service-core.module";
 import { ReportsModule } from "./reports/reports.module";
+import { AssetsModule } from "./assets/assets.module";
 import { HealthController } from "./health.controller";
 import { SessionMiddleware } from "./auth/session.middleware";
 import { PreviewModeMiddleware } from "./auth/preview-mode.middleware";
@@ -109,6 +110,7 @@ import { PlanGuard } from "./common/guards/plan.guard";
     McpAuthModule,
     OrganizationModule,
     ReportsModule,
+    AssetsModule,
   ],
   controllers: [HealthController],
   providers: [
