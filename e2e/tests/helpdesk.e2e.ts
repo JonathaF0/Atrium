@@ -103,7 +103,7 @@ test.describe("Helpdesk", () => {
     await expect(owner.getByRole("link", { name: /Bulk VPN issue B/ })).toBeVisible();
     await owner.getByRole("button", { name: /^Mine/ }).click();
     await expect(owner.getByText("No tickets in this view.")).toBeVisible();
-    await owner.getByRole("button", { name: /^Open/ }).click();
+    await owner.getByRole("button", { name: /^Open\d*$/ }).click();
 
     await owner.getByPlaceholder("Subject or number...").fill("Bulk VPN issue");
     await expect(owner.getByTestId("ticket-row")).toHaveCount(2);

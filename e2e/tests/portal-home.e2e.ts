@@ -100,7 +100,7 @@ test.describe("Portal home", () => {
     await expect(client.getByTestId("home-announcements")).toBeVisible();
 
     await expect(client.getByRole("link", { name: "New ticket" })).toHaveAttribute("href", "/portal/tickets/new");
-    await expect(client.getByRole("link", { name: "Help center" })).toHaveAttribute("href", "/portal/kb");
+    await expect(client.getByLabel("Quick actions").getByRole("link", { name: "Help center" })).toHaveAttribute("href", "/portal/kb");
     await expect(client.getByRole("link", { name: "Pay invoice" })).toHaveAttribute(
       "href",
       `/portal/projects/${portal.projectId}?tab=invoices`,
