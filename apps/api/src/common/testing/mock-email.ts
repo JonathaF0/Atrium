@@ -34,6 +34,8 @@ const TEMPLATES: string[] = [
   "RenewalNoticeEmail",
   "AnnouncementEmail",
   "KbReviewDueEmail",
+  "EstimateSentEmail",
+  "EstimateRespondedEmail",
 ];
 
 const identity = (props: Record<string, unknown>): Record<string, unknown> => props;

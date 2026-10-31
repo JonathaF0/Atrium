@@ -47,6 +47,7 @@ import { PortalHomeModule } from "./portal-home/portal-home.module";
 import { KbModule } from "./kb/kb.module";
 import { ClientDocsModule } from "./client-docs/client-docs.module";
 import { CatalogModule } from "./catalog/catalog.module";
+import { EstimatesModule } from "./estimates/estimates.module";
 import { HealthController } from "./health.controller";
 import { SessionMiddleware } from "./auth/session.middleware";
 import { PreviewModeMiddleware } from "./auth/preview-mode.middleware";
@@ -123,6 +124,7 @@ import { PlanGuard } from "./common/guards/plan.guard";
     KbModule,
     ClientDocsModule,
     CatalogModule,
+    EstimatesModule,
   ],
   controllers: [HealthController],
   providers: [

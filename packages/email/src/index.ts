@@ -19,3 +19,5 @@ export { MondayDigestEmail } from "./templates/monday-digest";
 export { RenewalNoticeEmail } from "./templates/renewal-notice";
 export { AnnouncementEmail } from "./templates/announcement";
 export { KbReviewDueEmail } from "./templates/kb-review-due";
+export { EstimateSentEmail } from "./templates/estimate-sent";
+export { EstimateRespondedEmail } from "./templates/estimate-responded";
