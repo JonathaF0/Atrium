@@ -148,6 +148,8 @@ export class TicketsOpsService {
     const source: Ticket = await this.tickets.getOrThrow(id, orgId);
     const message = await this.prisma.ticketMessage.findFirst({ where: { id: dto.messageId, ticketId: id } });
     if (!message) throw new BadRequestException("Unknown message");
+    // The split-off message opens a ticket the requester can read, so an internal note can't be one.
+    if (message.visibility !== "public") throw new BadRequestException("Internal notes cannot be split into a ticket");
     const first = await this.prisma.ticketMessage.findFirst({ where: { ticketId: id }, orderBy: { createdAt: "asc" }, select: { id: true } });
     if (first?.id === message.id) throw new BadRequestException("The first message cannot be split off");
     const created: Ticket = await this.tickets.createTicket({

@@ -305,7 +305,12 @@ export class TicketsService {
       });
       if (!visible) throw new BadRequestException("Unknown category");
     }
-    if (dto.projectId) await assertProjectAccess(this.prisma, dto.projectId, userId, role, orgId);
+    if (dto.projectId) {
+      // assertProjectAccess skips owners and admins entirely, so check the workspace here.
+      const project = await this.prisma.project.findFirst({ where: { id: dto.projectId, organizationId: orgId }, select: { id: true } });
+      if (!project) throw new BadRequestException("Unknown project");
+      await assertProjectAccess(this.prisma, dto.projectId, userId, role, orgId);
+    }
     if (dto.assetId) {
       const asset = await this.prisma.asset.findFirst({
         where: { id: dto.assetId, organizationId: orgId, clientVisible: true, companyId: scope.companyId ?? "__none__" },

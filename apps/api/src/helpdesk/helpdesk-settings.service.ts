@@ -107,7 +107,15 @@ export class HelpdeskSettingsService {
       imapSecure: dto.imapSecure,
       imapMailbox: dto.imapMailbox,
     };
-    if (dto.imapPass !== undefined) data.imapPass = dto.imapPass ? this.settings.encrypt(dto.imapPass) : null;
+    if (dto.imapPass !== undefined) {
+      data.imapPass = dto.imapPass ? this.settings.encrypt(dto.imapPass) : null;
+    } else if (dto.imapHost !== undefined || dto.imapUser !== undefined) {
+      // The stored password is only ever sent to the server it was entered for.
+      const current = await this.serviceSettings.get(orgId);
+      if ((dto.imapHost !== undefined && (dto.imapHost || null) !== current.imapHost) || (dto.imapUser !== undefined && (dto.imapUser || null) !== current.imapUser)) {
+        data.imapPass = null;
+      }
+    }
     if (dto.imapHost !== undefined || dto.imapUser !== undefined || dto.imapMailbox !== undefined) {
       // A different mailbox starts from its newest message rather than replaying history.
       data.imapLastUid = null;

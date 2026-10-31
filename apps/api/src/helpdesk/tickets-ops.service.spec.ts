@@ -110,7 +110,7 @@ describe("split", () => {
   it("moves the message and its attachments to a new linked ticket", async () => {
     const s = build();
     s.prisma.ticketMessage.findFirst
-      .mockResolvedValueOnce({ id: "msg2", body: "Also my monitor flickers", authorUserId: "u1", authorName: "Sam", authorEmail: "sam@example.com", source: "portal" })
+      .mockResolvedValueOnce({ id: "msg2", body: "Also my monitor flickers", authorUserId: "u1", authorName: "Sam", authorEmail: "sam@example.com", source: "portal", visibility: "public" })
       .mockResolvedValueOnce({ id: "msg1" })
       .mockResolvedValueOnce({ id: "new-first" });
     await s.service.split("t1", ORG, actor, { messageId: "msg2" });
@@ -121,9 +121,16 @@ describe("split", () => {
     expect(s.prisma.ticketLink.create).toHaveBeenCalledWith({ data: { ticketId: "new", relatedTicketId: "t1", type: "split_from" } });
   });
 
+  it("will not turn an internal note into a ticket the requester can read", async () => {
+    const s = build();
+    s.prisma.ticketMessage.findFirst.mockResolvedValueOnce({ id: "msg2", body: "internal only", visibility: "internal" });
+    await expect(s.service.split("t1", ORG, actor, { messageId: "msg2" })).rejects.toThrow("Internal notes cannot be split");
+    expect(s.tickets.createTicket).not.toHaveBeenCalled();
+  });
+
   it("will not split off the first message", async () => {
     const s = build();
-    s.prisma.ticketMessage.findFirst.mockResolvedValueOnce({ id: "msg1", body: "x" }).mockResolvedValueOnce({ id: "msg1" });
+    s.prisma.ticketMessage.findFirst.mockResolvedValueOnce({ id: "msg1", body: "x", visibility: "public" }).mockResolvedValueOnce({ id: "msg1" });
     await expect(s.service.split("t1", ORG, actor, { messageId: "msg1" })).rejects.toThrow("first message");
   });
 });
