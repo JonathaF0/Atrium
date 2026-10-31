@@ -267,6 +267,14 @@ export class UpdateCompanyDto {
   @Min(0)
   @Max(COMPANY_NUMBER_MAX)
   employeeCount?: number | null;
+
+  /** Support rate in cents; overrides project and member rates for ticket time. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  hourlyRateCents?: number | null;
 }
 
 export class CreateCompanyDto extends UpdateCompanyDto {

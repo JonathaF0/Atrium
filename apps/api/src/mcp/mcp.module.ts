@@ -8,11 +8,12 @@ import { BillingModule } from "../billing/billing.module";
 import { DocumentsModule } from "../documents/documents.module";
 import { ContactsModule } from "../contacts/contacts.module";
 import { KbModule } from "../kb/kb.module";
+import { HelpdeskModule } from "../helpdesk/helpdesk.module";
 import { McpController } from "./mcp.controller";
 import { McpService } from "./mcp.service";
 
 @Module({
-  imports: [ProjectsModule, TasksModule, UpdatesModule, NotesModule, ClientsModule, BillingModule, DocumentsModule, ContactsModule, KbModule],
+  imports: [ProjectsModule, TasksModule, UpdatesModule, NotesModule, ClientsModule, BillingModule, DocumentsModule, ContactsModule, KbModule, HelpdeskModule],
   controllers: [McpController],
   providers: [McpService],
 })

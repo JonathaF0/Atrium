@@ -8,7 +8,8 @@ export class SearchService {
   async search(orgId: string, q: string) {
     // Portal clients are found as contacts (their contact is linked to their login), so there is
     // no separate clients group.
-    const [projects, tasks, files, contactRows, companies, kbArticles] = await Promise.all([
+    const ticketNumber = /^(?:[A-Za-z]{2,10}-)?#?(\d{1,9})$/.exec(q.trim());
+    const [projects, tasks, files, contactRows, companies, ticketRows, ticketSettings, kbArticles] = await Promise.all([
       this.prisma.project.findMany({
         where: {
           organizationId: orgId,
@@ -82,6 +83,19 @@ export class SearchService {
         select: { id: true, name: true },
         take: 5,
       }),
+      this.prisma.ticket.findMany({
+        where: {
+          organizationId: orgId,
+          OR: [
+            { subject: { contains: q, mode: "insensitive" } },
+            ...(ticketNumber ? [{ number: Number(ticketNumber[1]) }] : []),
+          ],
+        },
+        select: { id: true, number: true, subject: true, status: true },
+        orderBy: { lastActivityAt: "desc" },
+        take: 5,
+      }),
+      this.prisma.serviceSettings.findUnique({ where: { organizationId: orgId }, select: { ticketPrefix: true } }),
       this.prisma.kbArticle.findMany({
         where: {
           organizationId: orgId,
@@ -101,6 +115,8 @@ export class SearchService {
       company: c.company?.name ?? null,
     }));
 
-    return { projects, tasks, files, contacts, companies, kbArticles };
+    const tickets = ticketRows.map((t) => ({ ...t, reference: `${ticketSettings?.ticketPrefix ?? "TKT"}-${t.number}` }));
+
+    return { projects, tasks, files, contacts, companies, tickets, kbArticles };
   }
 }

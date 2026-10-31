@@ -645,7 +645,7 @@ export class TicketsService {
         slaPolicy: { select: { id: true, name: true, warnAtPercent: true } },
         mergedInto: { select: { id: true, number: true, subject: true } },
         mergedFrom: { select: { id: true, number: true, subject: true } },
-        messages: { orderBy: { createdAt: "asc" }, select: MESSAGE_SELECT },
+        messages: { orderBy: { createdAt: "asc" }, select: { ...MESSAGE_SELECT, emailMessageId: true } },
         events: { orderBy: { createdAt: "asc" } },
         labels: { select: { label: { select: { id: true, name: true, color: true } } } },
         links: { select: { id: true, type: true, relatedTicket: { select: { id: true, number: true, subject: true, status: true } } } },

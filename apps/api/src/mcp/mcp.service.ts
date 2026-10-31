@@ -14,6 +14,7 @@ import { ContactsService } from "../contacts/contacts.service";
 import { ClientsService } from "../clients/clients.service";
 import { BillingService } from "../billing/billing.service";
 import { DocumentsService } from "../documents/documents.service";
+import { TicketsService } from "../helpdesk/tickets.service";
 import { runTool } from "./tool-kit";
 import type { McpTool, ToolResult } from "./tool-kit";
 import { workspaceTools } from "./tools/workspace.tools";
@@ -28,6 +29,7 @@ import { kbTools } from "./tools/kb.tools";
 import { KbReaderService } from "../kb/kb-reader.service";
 import { KbArticlesService } from "../kb/kb-articles.service";
 import { KbCollectionsService } from "../kb/kb-collections.service";
+import { ticketTools } from "./tools/tickets.tools";
 import { publicApiUrl } from "../common/helpers/public-api-url";
 
 const RATE_LIMIT = 300;
@@ -51,6 +53,7 @@ export class McpService {
     private kbReader: KbReaderService,
     private kbArticles: KbArticlesService,
     private kbCollections: KbCollectionsService,
+    private tickets: TicketsService,
   ) {}
 
   /** RFC 9728 challenge pointing MCP clients at this API's OAuth metadata. */
@@ -71,6 +74,7 @@ export class McpService {
       ...contactTools({ contacts: this.contacts }),
       ...documentTools({ documents: this.documents }),
       ...kbTools({ reader: this.kbReader, articles: this.kbArticles, collections: this.kbCollections }),
+      ...ticketTools({ tickets: this.tickets }),
     ];
   }
 

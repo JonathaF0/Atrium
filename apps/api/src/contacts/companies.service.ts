@@ -129,6 +129,7 @@ export class CompaniesService {
           notes: dto.notes,
           annualRevenue: dto.annualRevenue,
           employeeCount: dto.employeeCount,
+          hourlyRateCents: dto.hourlyRateCents,
         },
       });
     } catch (e) {
@@ -149,6 +150,7 @@ export class CompaniesService {
           notes: dto.notes,
           annualRevenue: dto.annualRevenue,
           employeeCount: dto.employeeCount,
+          hourlyRateCents: dto.hourlyRateCents,
         },
       });
     } catch (e) {
