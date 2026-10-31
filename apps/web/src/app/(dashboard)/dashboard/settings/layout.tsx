@@ -17,6 +17,7 @@ const SECTIONS: Section[] = [
   { href: "/dashboard/settings/integrations", label: "Integrations" },
   { href: "/dashboard/settings/status-page", label: "Status page" },
   { href: "/dashboard/settings/audit-log", label: "Audit log" },
+  { href: "/dashboard/settings/helpdesk", label: "Helpdesk" },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }): React.ReactElement {

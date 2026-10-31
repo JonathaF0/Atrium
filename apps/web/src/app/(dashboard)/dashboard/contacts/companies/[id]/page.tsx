@@ -15,6 +15,7 @@ import { useRowLink } from "@/lib/use-row-link";
 import { CompanyAssets } from "../../../assets/company-assets";
 import { CompanyContracts } from "../../../contracts/company-contracts";
 import { CompanyDocsSection } from "./company-docs-section";
+import { formatCurrency } from "@/lib/format";
 
 interface CompanyDetail {
   id: string;
@@ -23,6 +24,7 @@ interface CompanyDetail {
   notes: string | null;
   annualRevenue: number | null;
   employeeCount: number | null;
+  hourlyRateCents: number | null;
   people: { id: string; name: string; email: string | null; status: string }[];
   revenue: Revenue;
 }
@@ -64,6 +66,7 @@ export default function CompanyPage() {
   const [website, setWebsite] = useState("");
   const [annualRevenue, setAnnualRevenue] = useState("");
   const [employeeCount, setEmployeeCount] = useState("");
+  const [hourlyRate, setHourlyRate] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -105,6 +108,7 @@ export default function CompanyPage() {
     setWebsite(company.website ?? "");
     setAnnualRevenue(toInput(company.annualRevenue));
     setEmployeeCount(toInput(company.employeeCount));
+    setHourlyRate(company.hourlyRateCents == null ? "" : String(company.hourlyRateCents / 100));
     setEditing(true);
   }
 
@@ -118,6 +122,7 @@ export default function CompanyPage() {
         website: website.trim() || null,
         annualRevenue: wholeNumber(annualRevenue),
         employeeCount: wholeNumber(employeeCount),
+        hourlyRateCents: hourlyRate.trim() === "" ? null : Math.round(Number(hourlyRate) * 100),
       },
       "Failed to update company",
     );
@@ -240,6 +245,21 @@ export default function CompanyPage() {
                 className={inputClass}
               />
             </div>
+            <div>
+              <label htmlFor="company-rate" className={fieldLabelClass}>
+                Support rate per hour
+              </label>
+              <input
+                id="company-rate"
+                type="number"
+                min={0}
+                max={1000000}
+                step={0.01}
+                value={hourlyRate}
+                onChange={(e) => setHourlyRate(e.target.value)}
+                className={inputClass}
+              />
+            </div>
             <button
               type="submit"
               disabled={saving || !name.trim()}
@@ -265,7 +285,7 @@ export default function CompanyPage() {
                   {company.website}
                 </a>
               )}
-              {(company.annualRevenue != null || company.employeeCount != null) && (
+              {(company.annualRevenue != null || company.employeeCount != null || company.hourlyRateCents != null) && (
                 <dl data-testid="company-size" className="flex gap-4 text-sm text-[var(--muted-foreground)] mt-1">
                   {company.annualRevenue != null && (
                     <div className="flex gap-1">
@@ -277,6 +297,12 @@ export default function CompanyPage() {
                     <div className="flex gap-1">
                       <dt>Employees:</dt>
                       <dd className="text-[var(--foreground)]">{numberFormat.format(company.employeeCount)}</dd>
+                    </div>
+                  )}
+                  {company.hourlyRateCents != null && (
+                    <div className="flex gap-1">
+                      <dt>Support rate:</dt>
+                      <dd className="text-[var(--foreground)]">{formatCurrency(company.hourlyRateCents)}/h</dd>
                     </div>
                   )}
                 </dl>

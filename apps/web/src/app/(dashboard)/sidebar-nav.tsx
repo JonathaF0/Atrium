@@ -16,11 +16,13 @@ import {
   Calculator,
   Package,
   Repeat,
+  LifeBuoy,
 } from "lucide-react";
 
 const navItems = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { href: "/dashboard/projects", label: "Projects", icon: FolderKanban },
+  { href: "/dashboard/tickets", label: "Tickets", icon: LifeBuoy },
   { href: "/dashboard/calendar", label: "Calendar", icon: Calendar },
   { href: "/dashboard/contacts", label: "Contacts", icon: Contact },
   { href: "/dashboard/contracts", label: "Contracts", icon: FileSignature },

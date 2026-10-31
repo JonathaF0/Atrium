@@ -128,6 +128,12 @@ export default async function PortalLayout({
               Billing
             </Link>
             <Link
+              href="/portal/tickets"
+              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              Support
+            </Link>
+            <Link
               href="/portal/settings"
               className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             >
