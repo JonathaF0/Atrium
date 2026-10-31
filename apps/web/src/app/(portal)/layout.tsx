@@ -112,6 +112,12 @@ export default async function PortalLayout({
               Documentation
             </Link>
             <Link
+              href="/portal/estimates"
+              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            >
+              Estimates
+            </Link>
+            <Link
               href="/portal/settings"
               className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             >
