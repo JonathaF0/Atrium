@@ -39,8 +39,18 @@ function build() {
   const timeEntries = { create: mock(async () => ({ id: "te1" })) };
   const audit = { record: mock(async () => undefined) };
   const settings = { get: mock(async () => ({ ticketPrefix: "TKT" })) };
-  const service = new TicketsOpsService(prisma as never, tickets as never, timeEntries as never, audit as never, settings as never);
-  return { service, prisma, tickets, timeEntries, audit };
+  const contracts = {
+    coverageFor: mock(async () => ({ defaultBillable: true, defaultContractId: null as string | null })),
+  };
+  const service = new TicketsOpsService(
+    prisma as never,
+    tickets as never,
+    timeEntries as never,
+    audit as never,
+    settings as never,
+    contracts as never,
+  );
+  return { service, prisma, tickets, timeEntries, audit, contracts };
 }
 
 describe("bulk actions", () => {
@@ -140,6 +150,28 @@ describe("time", () => {
     s.tickets.getOrThrow.mockResolvedValue(t("t1", 1001, { projectId: "p1", companyId: "co1" }));
     s.prisma.company.findFirst.mockResolvedValue({ hourlyRateCents: null });
     await s.service.logTime("t1", ORG, "staff", { minutes: 10 });
+    const data = (s.prisma.timeEntry.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
+    expect(data).toEqual({ ticketId: "t1" });
+  });
+
+  it("counts time against a contract with covered hours left when billable isn't given", async () => {
+    const s = build();
+    s.tickets.getOrThrow.mockResolvedValue(t("t1", 1001, { projectId: "p1", companyId: "co1" }));
+    s.contracts.coverageFor.mockResolvedValue({ defaultBillable: false, defaultContractId: "k1" });
+    await s.service.logTime("t1", ORG, "staff", { minutes: 30 });
+    expect(s.contracts.coverageFor).toHaveBeenCalledWith(ORG, "co1");
+    const created = (s.timeEntries.create.mock.calls[0] as unknown as [string, string, { billable: boolean }])[2];
+    expect(created.billable).toBe(false);
+    const data = (s.prisma.timeEntry.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
+    expect(data).toEqual({ ticketId: "t1", contractId: "k1" });
+  });
+
+  it("respects an explicit billable choice over the contract", async () => {
+    const s = build();
+    s.tickets.getOrThrow.mockResolvedValue(t("t1", 1001, { projectId: "p1", companyId: "co1" }));
+    s.contracts.coverageFor.mockResolvedValue({ defaultBillable: false, defaultContractId: "k1" });
+    await s.service.logTime("t1", ORG, "staff", { minutes: 30, billable: true });
+    expect(s.contracts.coverageFor).not.toHaveBeenCalled();
     const data = (s.prisma.timeEntry.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
     expect(data).toEqual({ ticketId: "t1" });
   });

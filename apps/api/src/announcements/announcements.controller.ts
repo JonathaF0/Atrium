@@ -246,6 +246,12 @@ export class AnnouncementsController {
     return this.service.postUpdate(orgId, id, actor(user, req), dto);
   }
 
+  @Get("for-ticket/:ticketId")
+  @Roles("owner", "admin")
+  forTicket(@CurrentOrg("id") orgId: string, @Param("ticketId") ticketId: string) {
+    return this.service.forTicket(orgId, ticketId);
+  }
+
   @Get(":id/tickets")
   @Roles("owner", "admin")
   tickets(@CurrentOrg("id") orgId: string, @Param("id") id: string) {

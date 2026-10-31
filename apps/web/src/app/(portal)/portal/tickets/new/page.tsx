@@ -33,6 +33,8 @@ export default function NewTicketPage(): React.ReactElement {
   const [urgency, setUrgency] = useState("medium");
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [assets, setAssets] = useState<{ id: string; name: string; type: string }[]>([]);
+  const [assetId, setAssetId] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -42,6 +44,9 @@ export default function NewTicketPage(): React.ReactElement {
     apiFetch<{ data: ProjectOption[] }>("/projects/mine?limit=100")
       .then((res) => setProjects(res.data))
       .catch(() => setProjects([]));
+    apiFetch<{ id: string; name: string; type: string }[]>("/assets/mine")
+      .then(setAssets)
+      .catch(() => setAssets([]));
   }, []);
 
   const submit = async (e: React.FormEvent): Promise<void> => {
@@ -59,6 +64,7 @@ export default function NewTicketPage(): React.ReactElement {
           urgency,
           ...(categoryId ? { categoryId } : {}),
           ...(projectId ? { projectId } : {}),
+          ...(assetId ? { assetId } : {}),
         }),
       });
       if (files.length > 0 && ticket.messages[0]) {
@@ -173,6 +179,22 @@ export default function NewTicketPage(): React.ReactElement {
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {assets.length > 0 && (
+          <div>
+            <label htmlFor="ticket-asset" className="block text-sm font-medium mb-1">
+              Affected device or service (optional)
+            </label>
+            <select id="ticket-asset" value={assetId} onChange={(e) => setAssetId(e.target.value)} className={inputClass}>
+              <option value="">None</option>
+              {assets.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
                 </option>
               ))}
             </select>

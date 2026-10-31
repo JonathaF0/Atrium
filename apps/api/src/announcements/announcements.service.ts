@@ -498,6 +498,17 @@ export class AnnouncementsService {
     return links.map((l) => ({ ...l.ticket, reference: formatReference(settings.ticketPrefix, l.ticket.number) }));
   }
 
+  /** Announcements linked to a ticket, newest first (staff). */
+  async forTicket(organizationId: string, ticketId: string) {
+    const links = await this.prisma.ticketAnnouncement.findMany({
+      where: { ticketId, ticket: { organizationId }, announcement: { organizationId } },
+      select: {
+        announcement: { select: { id: true, title: true, type: true, severity: true, status: true, incidentState: true } },
+      },
+    });
+    return links.map((l) => l.announcement);
+  }
+
   async linkTicket(organizationId: string, id: string, ticketId: string, actor: Actor): Promise<void> {
     const announcement = await this.get(organizationId, id);
     const ticket = await this.prisma.ticket.findFirst({ where: { id: ticketId, organizationId }, select: { id: true, number: true } });

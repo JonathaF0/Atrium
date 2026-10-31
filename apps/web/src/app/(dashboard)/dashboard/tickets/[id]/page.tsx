@@ -400,6 +400,7 @@ export default function StaffTicketPage(): React.ReactElement {
           </section>
 
           <LinksPanel ticket={ticket} run={run} />
+          <RelatedPanel ticket={ticket} run={run} />
           <TimePanel ticket={ticket} run={run} />
 
           {ticket.csatRating && (
@@ -498,6 +499,7 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
             </button>
           ))}
         </div>
+        <ArticlePicker onPick={(md) => setBody((prev) => (prev ? `${prev}\n\n${md}` : md))} />
         {canned.length > 0 && (
           <select aria-label="Insert canned response" className="px-2 py-1 border border-[var(--border)] rounded-lg bg-[var(--background)] text-xs" value="" onChange={(e) => void insertCanned(e.target.value)}>
             <option value="">Insert response...</option>
@@ -529,6 +531,190 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
 }
 
 type Run = (fn: () => Promise<unknown>, ok?: string) => Promise<boolean>;
+
+interface ArticleHit {
+  id: string;
+  title: string;
+  slug: string;
+  status?: string;
+}
+
+/** Searches published help articles and inserts a markdown link to the portal copy. */
+function ArticlePicker({ onPick }: { onPick: (markdown: string) => void }): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<ArticleHit[]>([]);
+
+  useEffect(() => {
+    if (!open || q.trim().length < 2) {
+      setHits([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      apiFetch<ArticleHit[]>(`/kb/search?q=${encodeURIComponent(q.trim())}`)
+        .then((rows) => !cancelled && setHits(rows.filter((r) => !r.status || r.status === "published").slice(0, 8)))
+        .catch(() => !cancelled && setHits([]));
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [q, open]);
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="px-2 py-1 border border-[var(--border)] rounded-lg text-xs">
+        Insert article...
+      </button>
+    );
+  }
+  return (
+    <div className="relative">
+      <input
+        autoFocus
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder="Search articles"
+        aria-label="Search help articles"
+        className="px-2 py-1 border border-[var(--border)] rounded-lg bg-[var(--background)] text-xs w-48"
+      />
+      {hits.length > 0 && (
+        <ul className="absolute z-10 mt-1 w-72 bg-[var(--background)] border border-[var(--border)] rounded-lg shadow-lg text-xs">
+          {hits.map((h) => (
+            <li key={h.id}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onPick(`[${h.title.replace(/[[\]]/g, "")}](${window.location.origin}/portal/kb/${h.slug})`);
+                  setOpen(false);
+                  setQ("");
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-[var(--muted)]"
+              >
+                {h.title}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+interface LinkedAsset {
+  id: string;
+  name: string;
+  type: string;
+}
+
+interface LinkedAnnouncement {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  incidentState: string | null;
+}
+
+/** Assets and incidents linked to the ticket. */
+function RelatedPanel({ ticket, run }: { ticket: StaffTicket; run: Run }): React.ReactElement {
+  const [assets, setAssets] = useState<LinkedAsset[]>([]);
+  const [companyAssets, setCompanyAssets] = useState<LinkedAsset[]>([]);
+  const [incidents, setIncidents] = useState<LinkedAnnouncement[]>([]);
+  const [activeIncidents, setActiveIncidents] = useState<LinkedAnnouncement[]>([]);
+  const [assetId, setAssetId] = useState("");
+  const [incidentId, setIncidentId] = useState("");
+
+  const load = useCallback(async (): Promise<void> => {
+    const [linkedAssets, linkedIncidents] = await Promise.all([
+      apiFetch<LinkedAsset[]>(`/assets/for-ticket/${ticket.id}`).catch(() => []),
+      apiFetch<LinkedAnnouncement[]>(`/announcements/for-ticket/${ticket.id}`).catch(() => []),
+    ]);
+    setAssets(linkedAssets);
+    setIncidents(linkedIncidents);
+  }, [ticket.id]);
+
+  useEffect(() => {
+    void load();
+    apiFetch<{ data: LinkedAnnouncement[] }>("/announcements?status=published&type=incident&limit=50")
+      .then((r) => setActiveIncidents(r.data.filter((a) => a.incidentState !== "resolved")))
+      .catch(() => undefined);
+  }, [load]);
+
+  useEffect(() => {
+    if (!ticket.company) {
+      setCompanyAssets([]);
+      return;
+    }
+    apiFetch<{ data: LinkedAsset[] }>(`/assets?companyId=${encodeURIComponent(ticket.company.id)}&limit=100`)
+      .then((r) => setCompanyAssets(r.data))
+      .catch(() => setCompanyAssets([]));
+  }, [ticket.company]);
+
+  const linkAsset = async (): Promise<void> => {
+    if (await run(() => apiFetch(`/assets/${assetId}/tickets/${ticket.id}`, { method: "POST" }), "Asset linked")) {
+      setAssetId("");
+      await load();
+    }
+  };
+  const unlinkAsset = async (id: string): Promise<void> => {
+    if (await run(() => apiFetch(`/assets/${id}/tickets/${ticket.id}`, { method: "DELETE" }))) await load();
+  };
+  const linkIncident = async (): Promise<void> => {
+    if (await run(() => apiFetch(`/announcements/${incidentId}/tickets/${ticket.id}`, { method: "POST" }), "Linked to incident")) {
+      setIncidentId("");
+      await load();
+    }
+  };
+  const unlinkIncident = async (id: string): Promise<void> => {
+    if (await run(() => apiFetch(`/announcements/${id}/tickets/${ticket.id}`, { method: "DELETE" }))) await load();
+  };
+
+  const linkableAssets = companyAssets.filter((a) => !assets.some((l) => l.id === a.id));
+  const linkableIncidents = activeIncidents.filter((a) => !incidents.some((l) => l.id === a.id));
+
+  return (
+    <section className={`${box} space-y-3 text-sm`} aria-label="Related">
+      <h2 className="font-medium text-sm">Assets and incidents</h2>
+      <ul className="space-y-1">
+        {assets.map((a) => (
+          <li key={a.id} className="flex items-center justify-between gap-2">
+            <Link href={`/dashboard/assets?asset=${a.id}`} className="text-[var(--primary)] hover:underline truncate">{a.name}</Link>
+            <button type="button" onClick={() => void unlinkAsset(a.id)} className="text-xs text-[var(--muted-foreground)] hover:text-red-600">Remove</button>
+          </li>
+        ))}
+        {incidents.map((a) => (
+          <li key={a.id} className="flex items-center justify-between gap-2">
+            <Link href={`/dashboard/announcements/${a.id}`} className="text-[var(--primary)] hover:underline truncate">{a.title}</Link>
+            <button type="button" onClick={() => void unlinkIncident(a.id)} className="text-xs text-[var(--muted-foreground)] hover:text-red-600">Remove</button>
+          </li>
+        ))}
+        {assets.length === 0 && incidents.length === 0 && <li className="text-xs text-[var(--muted-foreground)]">Nothing linked</li>}
+      </ul>
+      {linkableAssets.length > 0 && (
+        <div className="flex gap-1">
+          <select aria-label="Asset to link" value={assetId} onChange={(e) => setAssetId(e.target.value)} className={input}>
+            <option value="">Link an asset...</option>
+            {linkableAssets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <button type="button" disabled={!assetId} onClick={() => void linkAsset()} className="px-2 py-1 text-xs border border-[var(--border)] rounded-lg">Link</button>
+        </div>
+      )}
+      {linkableIncidents.length > 0 && (
+        <div className="flex gap-1">
+          <select aria-label="Incident to link" value={incidentId} onChange={(e) => setIncidentId(e.target.value)} className={input}>
+            <option value="">Link to an incident...</option>
+            {linkableIncidents.map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}
+          </select>
+          <button type="button" disabled={!incidentId} onClick={() => void linkIncident()} className="px-2 py-1 text-xs border border-[var(--border)] rounded-lg">Link</button>
+        </div>
+      )}
+    </section>
+  );
+}
 
 /** Finds a ticket id from a reference or number the user typed. */
 async function findTicketId(ref: string): Promise<{ id: string; reference: string } | null> {
@@ -635,9 +821,33 @@ function ActionsPanel({ ticket, run }: { ticket: StaffTicket; run: Run }): React
     if (await run(() => apiFetch(`/tickets/${ticket.id}/merge`, { method: "POST", body: JSON.stringify({ sourceIds: [found.id] }) }), `Merged ${found.reference} into this ticket`)) setMergeRef("");
   };
 
+  const draftArticle = async (): Promise<void> => {
+    try {
+      const article = await apiFetch<{ id: string }>(`/kb/articles/from-ticket/${ticket.id}`, { method: "POST" });
+      router.push(`/dashboard/kb/articles/${article.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not draft the article");
+    }
+  };
+
   return (
     <section className={`${box} space-y-3`} aria-label="Actions">
       <h2 className="font-medium text-sm">Actions</h2>
+      <Link
+        href={`/dashboard/estimates/new?ticketId=${encodeURIComponent(ticket.id)}`}
+        className="block w-full px-2 py-1 text-xs text-center border border-[var(--border)] rounded-lg hover:bg-[var(--muted)]"
+      >
+        Create estimate
+      </Link>
+      {(ticket.status === "resolved" || ticket.status === "closed") && (
+        <button
+          type="button"
+          onClick={() => void draftArticle()}
+          className="w-full px-2 py-1 text-xs border border-[var(--border)] rounded-lg hover:bg-[var(--muted)]"
+        >
+          Draft help article from this ticket
+        </button>
+      )}
       {!ticket.mergedInto && (
         <div>
           <div className="text-xs text-[var(--muted-foreground)] mb-1">Merge another ticket into this one</div>

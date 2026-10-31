@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import type { Ticket } from "@atrium/database";
 import { TICKET_PRIORITIES, TICKET_STATUSES, type TicketSource, type TicketStatus } from "@atrium/shared";
 import { PrismaService } from "../prisma/prisma.service";
+import { ContractsService } from "../contracts/contracts.service";
 import { TimeEntriesService } from "../time-entries/time-entries.service";
 import { AuditService, ServiceSettingsService, auditContext, formatReference } from "../service-core";
 import type { AuditRequestContext } from "../service-core";
@@ -31,6 +32,7 @@ export class TicketsOpsService {
     private timeEntries: TimeEntriesService,
     private audit: AuditService,
     private serviceSettings: ServiceSettingsService,
+    private contracts: ContractsService,
   ) {}
 
   async bulk(orgId: string, actor: TicketActor, dto: BulkTicketsDto, req?: AuditRequestContext) {
@@ -202,6 +204,8 @@ export class TicketsOpsService {
    * project: the ticket's, or a per-company "Support — <Company>" project
    * created on first use (no clients are added to it). The company's support
    * rate, when set, overrides the project and member rates for billable time.
+   * When billable isn't given and the company's contract still has covered
+   * hours, the entry is non-billable and counted against that contract.
    */
   async logTime(id: string, orgId: string, userId: string, dto: TicketTimeDto) {
     const ticket: Ticket = await this.tickets.getOrThrow(id, orgId);
@@ -209,12 +213,15 @@ export class TicketsOpsService {
     const end: Date = dto.endedAt ? new Date(dto.endedAt) : new Date();
     if (Number.isNaN(end.getTime())) throw new BadRequestException("Invalid endedAt");
     const start = new Date(end.getTime() - dto.minutes * 60_000);
+    const coverage = dto.billable === undefined ? await this.contracts.coverageFor(orgId, ticket.companyId) : null;
+    const billable: boolean = dto.billable ?? coverage?.defaultBillable ?? true;
+    const contractId: string | null = billable ? null : (coverage?.defaultContractId ?? null);
     const entry = await this.timeEntries.create(userId, orgId, {
       projectId,
       description: dto.description?.trim() || `Ticket #${ticket.number}: ${ticket.subject}`.slice(0, 1000),
       startedAt: start.toISOString(),
       endedAt: end.toISOString(),
-      billable: dto.billable ?? true,
+      billable,
     });
     const company = ticket.companyId
       ? await this.prisma.company.findFirst({ where: { id: ticket.companyId, organizationId: orgId }, select: { hourlyRateCents: true } })
@@ -223,11 +230,12 @@ export class TicketsOpsService {
       where: { id: entry.id },
       data: {
         ticketId: ticket.id,
+        ...(contractId ? { contractId } : {}),
         ...(company?.hourlyRateCents != null ? { hourlyRateCents: company.hourlyRateCents } : {}),
       },
     });
     await this.prisma.ticketEvent.create({
-      data: { ticketId: id, actorId: userId, type: "time_logged", toValue: `${dto.minutes} min`, detail: dto.billable === false ? "non-billable" : "billable" },
+      data: { ticketId: id, actorId: userId, type: "time_logged", toValue: `${dto.minutes} min`, detail: contractId ? "covered by contract" : billable ? "billable" : "non-billable" },
     });
     return updated;
   }

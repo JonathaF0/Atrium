@@ -5,6 +5,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
 import { IntegrationsModule } from "../integrations/integrations.module";
 import { SettingsModule } from "../settings/settings.module";
 import { TimeEntriesModule } from "../time-entries/time-entries.module";
+import { ContractsModule } from "../contracts/contracts.module";
 import { TicketsPortalController } from "./tickets-portal.controller";
 import { TicketsController } from "./tickets.controller";
 import { HelpdeskSettingsController } from "./helpdesk-settings.controller";
@@ -21,7 +22,7 @@ import { InboundEmailService } from "./inbound/inbound.service";
 import { AutoCloseTask, ImapPollTask, SlaTask } from "./helpdesk.tasks";
 
 @Module({
-  imports: [ScheduleModule.forRoot(), MailModule, NotificationsModule, IntegrationsModule, SettingsModule, TimeEntriesModule],
+  imports: [ScheduleModule.forRoot(), MailModule, NotificationsModule, IntegrationsModule, SettingsModule, TimeEntriesModule, ContractsModule],
   // The portal controller must come first: `/tickets/mine` would otherwise match `/tickets/:id`.
   controllers: [TicketsPortalController, TicketsController, HelpdeskSettingsController, InboundController],
   providers: [
