@@ -3,6 +3,8 @@
 import { BrandingPageSection } from "../branding/branding-page-section";
 import { GeneralSection } from "../general/general-section";
 import { LeadSourcesSection } from "../lead-sources/lead-sources-section";
+import { SecuritySection } from "../security/security-section";
+import { SampleContentSection } from "../sample-content/sample-content-section";
 
 export default function WorkspaceSettingsPage(): React.ReactElement {
   return (
@@ -13,8 +15,14 @@ export default function WorkspaceSettingsPage(): React.ReactElement {
       <section className="py-10">
         <LeadSourcesSection />
       </section>
-      <section className="pt-10">
+      <section className="py-10">
         <GeneralSection />
+      </section>
+      <section className="py-10">
+        <SecuritySection />
+      </section>
+      <section className="pt-10">
+        <SampleContentSection />
       </section>
     </div>
   );

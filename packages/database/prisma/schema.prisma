@@ -34,6 +34,10 @@ model User {
   oauthConsents      OauthConsent[]
   mcpGrants          McpGrant[]
   mcpPendingGrants   McpPendingGrant[]
+  twoFactors         TwoFactor[]
+
+  // Two-factor (Better Auth twoFactor plugin)
+  twoFactorEnabled Boolean? @default(false)
 
   @@map("user")
 }
@@ -88,6 +92,43 @@ model Verification {
   @@map("verification")
 }
 
+// Better Auth twoFactor plugin: TOTP secret and backup codes, both encrypted by Better Auth.
+model TwoFactor {
+  id                      String    @id
+  secret                  String
+  backupCodes             String
+  userId                  String
+  verified                Boolean?  @default(true)
+  failedVerificationCount Int?      @default(0)
+  lockedUntil             DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([secret])
+  @@index([userId])
+  @@map("two_factor")
+}
+
+// Better Auth sso plugin (OIDC). Rows are written by Atrium's security settings, never by the
+// plugin's own routes; the client secret inside oidcConfig is encrypted at rest.
+model SsoProvider {
+  id             String   @id
+  issuer         String
+  oidcConfig     String?
+  samlConfig     String?
+  userId         String?
+  providerId     String   @unique
+  organizationId String?
+  domain         String
+  domainVerified Boolean? @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@index([organizationId])
+  @@index([domain])
+  @@map("sso_provider")
+}
+
 model Organization {
   id             String   @id
   name           String
@@ -118,6 +159,27 @@ model Organization {
   contacts         Contact[]
   companies        Company[]
   leadSources      LeadSource[]
+  auditLogs             AuditLog[]
+  serviceSettings       ServiceSettings?
+  ticketCategories      TicketCategory[]
+  tickets               Ticket[]
+  cannedResponses       CannedResponse[]
+  slaPolicies           SlaPolicy[]
+  businessHours         BusinessHours[]
+  automationRules       AutomationRule[]
+  inboundEmails         InboundEmail[]
+  kbCollections         KbCollection[]
+  kbArticles            KbArticle[]
+  clientDocs            ClientDoc[]
+  catalogItems          CatalogItem[]
+  catalogBundles        CatalogBundle[]
+  taxRates              TaxRate[]
+  estimates             Estimate[]
+  recurringInvoices     RecurringInvoice[]
+  assets                Asset[]
+  contracts             Contract[]
+  announcements         Announcement[]
+  announcementTemplates AnnouncementTemplate[]
 
   @@map("organization")
 }
@@ -510,6 +572,11 @@ model Invoice {
   paidAt                  DateTime?
   paidAmount              Int?      // Amount actually paid (cents)
 
+  estimateId         String? // the estimate this invoice was converted from
+  recurringInvoiceId String? // the schedule that generated it
+  dunningStage       Int       @default(0) // overdue reminders sent so far
+  lastDunningAt      DateTime?
+
   project      Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
   uploadedFile File?             @relation("UploadedInvoiceFile", fields: [uploadedFileId], references: [id])
   lineItems    InvoiceLineItem[]
@@ -529,6 +596,7 @@ model InvoiceLineItem {
   description String
   quantity    Int    @default(1)
   unitPrice   Int   // cents (1500 = $15.00)
+  taxRateBps  Int    @default(0) // basis points (825 = 8.25%)
   invoiceId   String
 
   invoice     Invoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
@@ -905,6 +973,8 @@ model Label {
   fileLabels    FileLabel[]
   memberLabels  MemberLabel[]
   contactLabels ContactLabel[]
+  ticketLabels  TicketLabel[]
+  kbLabels      KbArticleLabel[]
 
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -977,11 +1047,21 @@ model Company {
   notes          String?
   annualRevenue  Int? // whole units of currency
   employeeCount  Int?
+  // Default hourly rate for support work billed to this client; falls back to the project and member rates.
+  hourlyRateCents Int?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  contacts     Contact[]
+  organization        Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contacts            Contact[]
+  tickets             Ticket[]
+  clientDocs          ClientDoc[]
+  estimates           Estimate[]
+  recurringInvoices   RecurringInvoice[]
+  assets              Asset[]
+  contracts           Contract[]
+  kbAudiences         KbAudience[]
+  announcementTargets AnnouncementAudience[]
 
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -1029,6 +1109,8 @@ model Contact {
   followUpOwnerId    String? // userId of who set it; receives the reminder
   followUpNotifiedAt DateTime?
   profileImportedAt  DateTime? // set once ClientProfile data was copied in by the boot backfill
+  // A company admin sees every ticket, estimate and asset of their company in the portal, not only their own.
+  companyAdmin       Boolean   @default(false)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -1153,6 +1235,10 @@ model TimeEntry {
   hourlyRateCents   Int?
   invoiceLineItemId String?
   invoiceLineItem   InvoiceLineItem? @relation(fields: [invoiceLineItemId], references: [id], onDelete: SetNull)
+  ticketId          String?
+  ticket            Ticket?          @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  // Non-billable time counted against a contract's covered hours.
+  contractId        String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
 
@@ -1161,6 +1247,8 @@ model TimeEntry {
   @@index([taskId])
   @@index([invoiceLineItemId])
   @@index([organizationId, startedAt])
+  @@index([ticketId])
+  @@index([contractId])
   @@map("time_entry")
   // Partial unique index "time_entry_one_running_per_user" on
   // ("organizationId", "userId") WHERE "endedAt" IS NULL is applied
@@ -1211,4 +1299,1042 @@ model IntegrationDelivery {
   @@index([status, nextAttemptAt])
   @@index([destinationId, createdAt])
   @@map("integration_delivery")
+}
+
+// ─── Audit log ───
+
+/// Workspace-wide record of sensitive actions (permission changes, exports, billing,
+/// publishing, merges). Written by AuditService; read by the audit log viewer.
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  actorId        String? // userId; null for system jobs and inbound email
+  actorEmail     String?
+  action         String // dotted verb, e.g. "ticket.merged", "kb.article_published"
+  targetType     String
+  targetId       String?
+  summary        String?
+  metadata       Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, targetType, targetId])
+  @@index([organizationId, action])
+  @@map("audit_log")
+}
+
+// ─── Service settings (helpdesk, knowledge base, estimates, status page) ───
+
+model ServiceSettings {
+  id             String @id @default(cuid())
+  organizationId String @unique
+
+  // Helpdesk
+  ticketPrefix           String  @default("TKT")
+  nextTicketNumber       Int     @default(1001)
+  autoAcknowledge        Boolean @default(true)
+  csatEnabled            Boolean @default(true)
+  clientsCanClose        Boolean @default(true)
+  closeResolvedAfterDays Int     @default(7) // 0 = never
+  closeWaitingAfterDays  Int     @default(0) // tickets waiting on the client; 0 = never
+  triageAssigneeId       String?
+  defaultSlaPolicyId     String?
+
+  // Inbound email: "none" | "webhook" | "imap"
+  inboundMode          String    @default("none")
+  inboundAddress       String? // the address clients write to; replies are sent from here
+  inboundWebhookSecret String? // encrypted
+  imapHost             String?
+  imapPort             Int?
+  imapUser             String?
+  imapPass             String? // encrypted
+  imapSecure           Boolean   @default(true)
+  imapMailbox          String    @default("INBOX")
+  imapLastUid          Int?
+  imapLastPolledAt     DateTime?
+  imapLastError        String?
+
+  // Knowledge base
+  kbPublicEnabled Boolean @default(false)
+  kbReviewDays    Int     @default(180) // default "review by" offset for new articles
+
+  // Estimates
+  estimatePrefix       String  @default("EST")
+  nextEstimateNumber   Int     @default(1001)
+  estimateValidDays    Int     @default(30)
+  estimateDefaultTerms String?
+  aiAssistEnabled      Boolean @default(false)
+
+  // Announcements
+  statusPageEnabled Boolean @default(false)
+
+  // Security
+  requireTwoFactor Boolean @default(false) // "staff" | "all" enforcement is in twoFactorScope
+  twoFactorScope   String  @default("staff")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("service_settings")
+}
+
+// ─── Helpdesk ───
+
+model TicketCategory {
+  id                String    @id @default(cuid())
+  organizationId    String
+  name              String
+  description       String?
+  color             String    @default("#6b7280")
+  order             Int       @default(0)
+  defaultPriority   String    @default("normal")
+  defaultAssigneeId String?
+  slaPolicyId       String?
+  portalVisible     Boolean   @default(true)
+  archivedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  slaPolicy       SlaPolicy?       @relation(fields: [slaPolicyId], references: [id], onDelete: SetNull)
+  tickets         Ticket[]
+  cannedResponses CannedResponse[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([slaPolicyId])
+  @@map("ticket_category")
+}
+
+model Ticket {
+  id             String  @id @default(cuid())
+  organizationId String
+  number         Int
+  subject        String
+  // "new" | "open" | "waiting_client" | "waiting_third_party" | "on_hold" | "resolved" | "closed"
+  status         String  @default("new")
+  priority       String  @default("normal") // "low" | "normal" | "high" | "urgent"
+  impact         String? // "low" | "medium" | "high"
+  urgency        String? // "low" | "medium" | "high"
+  source         String  @default("portal") // "portal" | "email" | "staff" | "api"
+
+  categoryId         String?
+  companyId          String?
+  requesterContactId String?
+  requesterUserId    String?
+  requesterEmail     String? // lowercased; set for every ticket, the only requester data for triage
+  requesterName      String?
+  assigneeId         String? // userId of a staff member
+  projectId          String?
+  taskId             String? // task this ticket became, or came from
+  assetId            String?
+  mergedIntoId       String?
+  // Unknown inbound senders land here; they never get portal access.
+  triage             Boolean @default(false)
+
+  // SLA
+  slaPolicyId           String?
+  firstResponseDueAt    DateTime?
+  resolutionDueAt       DateTime?
+  firstRespondedAt      DateTime?
+  slaPausedAt           DateTime?
+  slaPausedSeconds      Int       @default(0)
+  firstResponseBreached Boolean   @default(false)
+  resolutionBreached    Boolean   @default(false)
+  slaWarnedAt           DateTime?
+  slaEscalatedAt        DateTime?
+
+  // Email threading: the random token goes into the subject ([TKT-1042:token]) and reply-to.
+  emailToken String @unique
+
+  waitingSince   DateTime?
+  lastActivityAt DateTime  @default(now())
+  resolvedAt     DateTime?
+  closedAt       DateTime?
+  csatRating     Int? // 1-5
+  csatComment    String?
+  csatAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization  Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category      TicketCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  company       Company?             @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  slaPolicy     SlaPolicy?           @relation(fields: [slaPolicyId], references: [id], onDelete: SetNull)
+  mergedInto    Ticket?              @relation("TicketMerge", fields: [mergedIntoId], references: [id], onDelete: SetNull)
+  mergedFrom    Ticket[]             @relation("TicketMerge")
+  messages      TicketMessage[]
+  attachments   TicketAttachment[]
+  events        TicketEvent[]
+  links         TicketLink[]         @relation("TicketLinkFrom")
+  linkedFrom    TicketLink[]         @relation("TicketLinkTo")
+  labels        TicketLabel[]
+  timeEntries   TimeEntry[]
+  assets        TicketAsset[]
+  announcements TicketAnnouncement[]
+  deflections   KbDeflection[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@index([organizationId, assigneeId, status])
+  @@index([organizationId, companyId])
+  @@index([organizationId, triage])
+  @@index([organizationId, resolutionDueAt])
+  @@index([requesterUserId])
+  @@index([categoryId])
+  @@index([slaPolicyId])
+  @@index([mergedIntoId])
+  @@index([subject(ops: raw("gin_trgm_ops"))], type: Gin, map: "ticket_subject_trgm_idx")
+  @@map("ticket")
+}
+
+model TicketMessage {
+  id             String   @id @default(cuid())
+  ticketId       String
+  organizationId String
+  authorUserId   String?
+  authorEmail    String?
+  authorName     String?
+  visibility     String   @default("public") // "public" | "internal"
+  body           String // markdown source
+  source         String   @default("portal") // "portal" | "email" | "staff" | "system" | "api"
+  emailMessageId String?
+  inReplyTo      String?
+  createdAt      DateTime @default(now())
+
+  ticket      Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  attachments TicketAttachment[]
+
+  @@index([ticketId, createdAt])
+  @@index([organizationId])
+  @@index([emailMessageId])
+  @@map("ticket_message")
+}
+
+model TicketAttachment {
+  id             String   @id @default(cuid())
+  ticketId       String
+  messageId      String?
+  organizationId String
+  storageKey     String
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  scanStatus     String   @default("skipped") // "clean" | "infected" | "skipped" | "error"
+  uploadedById   String?
+  createdAt      DateTime @default(now())
+
+  ticket  Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  message TicketMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+  @@index([messageId])
+  @@map("ticket_attachment")
+}
+
+/// Audit trail of a ticket's field changes (status, assignee, priority, merge, SLA breach).
+model TicketEvent {
+  id        String   @id @default(cuid())
+  ticketId  String
+  actorId   String?
+  type      String
+  fromValue String?
+  toValue   String?
+  detail    String?
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_event")
+}
+
+model TicketLink {
+  id              String   @id @default(cuid())
+  ticketId        String
+  relatedTicketId String
+  type            String   @default("related") // "related" | "duplicate" | "split_from"
+  createdAt       DateTime @default(now())
+
+  ticket        Ticket @relation("TicketLinkFrom", fields: [ticketId], references: [id], onDelete: Cascade)
+  relatedTicket Ticket @relation("TicketLinkTo", fields: [relatedTicketId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, relatedTicketId])
+  @@index([relatedTicketId])
+  @@map("ticket_link")
+}
+
+model TicketLabel {
+  id        String   @id @default(cuid())
+  ticketId  String
+  labelId   String
+  createdAt DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  label  Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, labelId])
+  @@index([labelId])
+  @@map("ticket_label")
+}
+
+model CannedResponse {
+  id             String   @id @default(cuid())
+  organizationId String
+  title          String
+  body           String // markdown with {{variables}}
+  categoryId     String?
+  ownerId        String? // null = shared with all staff
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category     TicketCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([categoryId])
+  @@map("canned_response")
+}
+
+model SlaPolicy {
+  id              String   @id @default(cuid())
+  organizationId  String
+  name            String
+  // { "<priority>": { "firstResponseMins": number, "resolutionMins": number } }
+  targets         Json
+  businessHoursId String?
+  warnAtPercent   Int      @default(80)
+  escalateToId    String? // userId notified on breach, besides the assignee and admins
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  businessHours BusinessHours?   @relation(fields: [businessHoursId], references: [id], onDelete: SetNull)
+  categories    TicketCategory[]
+  tickets       Ticket[]
+  contracts     Contract[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([businessHoursId])
+  @@map("sla_policy")
+}
+
+model BusinessHours {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  timezone       String // IANA name
+  // [{ "day": 0-6 (Sunday = 0), "start": "09:00", "end": "17:00" }]
+  schedule       Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  holidays     BusinessHoliday[]
+  slaPolicies  SlaPolicy[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("business_hours")
+}
+
+model BusinessHoliday {
+  id              String   @id @default(cuid())
+  businessHoursId String
+  date            DateTime @db.Date
+  name            String
+
+  businessHours BusinessHours @relation(fields: [businessHoursId], references: [id], onDelete: Cascade)
+
+  @@unique([businessHoursId, date])
+  @@map("business_holiday")
+}
+
+model AutomationRule {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  trigger        String // "ticket_created" | "ticket_updated"
+  // [{ "field": "categoryId" | "priority" | "source" | "companyId" | "subject", "op": "eq" | "neq" | "contains", "value": string }]
+  conditions     Json
+  // [{ "type": "set_priority" | "assign" | "set_category" | "add_label" | "set_status", "value": string }]
+  actions        Json
+  enabled        Boolean  @default(true)
+  order          Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, trigger, enabled])
+  @@map("automation_rule")
+}
+
+/// Every inbound email, kept for idempotency (Message-ID) and to explain triage decisions.
+model InboundEmail {
+  id             String   @id @default(cuid())
+  organizationId String
+  messageId      String
+  fromEmail      String
+  fromName       String?
+  subject        String
+  status         String // "ticket_created" | "reply_added" | "triaged" | "ignored" | "failed"
+  ticketId       String?
+  error          String?
+  receivedAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, messageId])
+  @@index([organizationId, receivedAt])
+  @@map("inbound_email")
+}
+
+// ─── Knowledge base ───
+
+model KbCollection {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String
+  description    String?
+  parentId       String?
+  order          Int      @default(0)
+  // "public" | "clients" | "restricted" (listed companies only) | "internal" (staff only)
+  visibility     String   @default("clients")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       KbCollection?  @relation("KbCollectionTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     KbCollection[] @relation("KbCollectionTree")
+  articles     KbArticle[]
+  audiences    KbAudience[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([parentId])
+  @@map("kb_collection")
+}
+
+model KbArticle {
+  id               String    @id @default(cuid())
+  organizationId   String
+  collectionId     String?
+  title            String
+  slug             String
+  body             String // markdown source
+  excerpt          String?
+  status           String    @default("draft") // "draft" | "in_review" | "published" | "archived"
+  visibility       String    @default("clients") // as KbCollection; the stricter of the two applies
+  ownerId          String?
+  reviewBy         DateTime?
+  reviewNotifiedAt DateTime?
+  version          Int       @default(1)
+  publishedAt      DateTime?
+  viewCount        Int       @default(0)
+  helpfulYes       Int       @default(0)
+  helpfulNo        Int       @default(0)
+  sourceTicketId   String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  collection   KbCollection?       @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  revisions    KbArticleRevision[]
+  audiences    KbAudience[]
+  labels       KbArticleLabel[]
+  feedback     KbFeedback[]
+  deflections  KbDeflection[]
+  attachments  KbAttachment[]
+  // Full-text index "kb_article_fts_idx" on to_tsvector('simple', title || ' ' || body)
+  // is applied out-of-band by packages/database/scripts/migrate-kb-fts.ts.
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, status])
+  @@index([collectionId])
+  @@index([organizationId, reviewBy])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "kb_article_title_trgm_idx")
+  @@map("kb_article")
+}
+
+model KbArticleRevision {
+  id        String   @id @default(cuid())
+  articleId String
+  version   Int
+  title     String
+  body      String
+  authorId  String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  article KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, version])
+  @@map("kb_article_revision")
+}
+
+/// Which client companies may read a "restricted" article or collection.
+model KbAudience {
+  id           String  @id @default(cuid())
+  articleId    String?
+  collectionId String?
+  companyId    String
+
+  article    KbArticle?    @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  collection KbCollection? @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  company    Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, companyId])
+  @@unique([collectionId, companyId])
+  @@index([companyId])
+  @@map("kb_audience")
+}
+
+model KbArticleLabel {
+  id        String   @id @default(cuid())
+  articleId String
+  labelId   String
+  createdAt DateTime @default(now())
+
+  article KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  label   Label     @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, labelId])
+  @@index([labelId])
+  @@map("kb_article_label")
+}
+
+model KbFeedback {
+  id        String   @id @default(cuid())
+  articleId String
+  userId    String? // null for anonymous public readers
+  voterKey  String // userId, or a hash of IP + user agent for public readers
+  helpful   Boolean
+  comment   String?
+  createdAt DateTime @default(now())
+
+  article KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, voterKey])
+  @@map("kb_feedback")
+}
+
+/// An article suggested while a client wrote a ticket. "deflected" = they left without submitting.
+model KbDeflection {
+  id        String   @id @default(cuid())
+  articleId String
+  userId    String?
+  ticketId  String?
+  outcome   String // "viewed" | "deflected" | "submitted"
+  createdAt DateTime @default(now())
+
+  article KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  ticket  Ticket?   @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@index([articleId, outcome])
+  @@index([ticketId])
+  @@map("kb_deflection")
+}
+
+model KbAttachment {
+  id             String   @id @default(cuid())
+  articleId      String
+  organizationId String
+  storageKey     String
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  scanStatus     String   @default("skipped")
+  uploadedById   String?
+  createdAt      DateTime @default(now())
+
+  article KbArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
+  @@map("kb_attachment")
+}
+
+/// Per-client documentation (network diagrams, runbooks, vendor lists, licenses). Visible to
+/// that company's portal users and staff only. Never holds secrets: credentials are vault links.
+model ClientDoc {
+  id             String   @id @default(cuid())
+  organizationId String
+  companyId      String
+  section        String   @default("other") // "network" | "onboarding" | "runbook" | "vendors" | "licenses" | "other"
+  title          String
+  body           String   @default("")
+  vaultUrl       String? // link to an external password vault entry
+  clientVisible  Boolean  @default(true) // false = staff-only notes about this client
+  order          Int      @default(0)
+  updatedById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  attachments  ClientDocAttachment[]
+
+  @@index([organizationId, companyId])
+  @@map("client_doc")
+}
+
+model ClientDocAttachment {
+  id             String   @id @default(cuid())
+  docId          String
+  organizationId String
+  storageKey     String
+  filename       String
+  mimeType       String
+  sizeBytes      Int
+  scanStatus     String   @default("skipped")
+  uploadedById   String?
+  createdAt      DateTime @default(now())
+
+  doc ClientDoc @relation(fields: [docId], references: [id], onDelete: Cascade)
+
+  @@index([docId])
+  @@map("client_doc_attachment")
+}
+
+// ─── Service catalog and estimates ───
+
+model TaxRate {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  rateBps        Int // basis points (825 = 8.25%)
+  isDefault      Boolean   @default(false)
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("tax_rate")
+}
+
+model CatalogItem {
+  id                String    @id @default(cuid())
+  organizationId    String
+  name              String
+  description       String?
+  category          String?
+  unit              String    @default("each") // "hour" | "each" | "month" | free text
+  billingType       String    @default("fixed") // "hourly" | "fixed" | "recurring"
+  recurringInterval String? // "monthly" | "quarterly" | "yearly"
+  rateCents         Int
+  costCents         Int?
+  taxable           Boolean   @default(true)
+  archivedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bundleItems  CatalogBundleItem[]
+
+  @@index([organizationId])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "catalog_item_name_trgm_idx")
+  @@map("catalog_item")
+}
+
+model CatalogBundle {
+  id             String    @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items        CatalogBundleItem[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("catalog_bundle")
+}
+
+model CatalogBundleItem {
+  id            String  @id @default(cuid())
+  bundleId      String
+  catalogItemId String
+  quantity      Decimal @default(1) @db.Decimal(12, 2)
+  optional      Boolean @default(false)
+  order         Int     @default(0)
+
+  bundle      CatalogBundle @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  catalogItem CatalogItem   @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+
+  @@index([bundleId])
+  @@index([catalogItemId])
+  @@map("catalog_bundle_item")
+}
+
+model Estimate {
+  id                   String    @id @default(cuid())
+  organizationId       String
+  number               String // prefix + sequence, e.g. "EST-1001"; revisions keep the number
+  version              Int       @default(1)
+  // Earlier versions are "superseded"; rootId groups every version of one estimate.
+  rootId               String?
+  // "draft" | "sent" | "viewed" | "changes_requested" | "accepted" | "declined" | "expired" | "superseded" | "converted"
+  status               String    @default("draft")
+  title                String
+  introduction         String?
+  companyId            String?
+  contactId            String?
+  recipientUserId      String? // portal user who receives it and can accept
+  projectId            String?
+  ticketId             String?
+  currency             String?
+  discountType         String? // "percent" | "amount"
+  discountValue        Int? // basis points for percent, cents for amount
+  depositPercent       Int? // 0-100
+  assumptions          String?
+  exclusions           String?
+  terms                String?
+  validUntil           DateTime?
+  sentAt               DateTime?
+  viewedAt             DateTime?
+  respondedAt          DateTime?
+  expiryReminderSentAt DateTime?
+  acceptedById         String?
+  acceptedName         String? // name typed or drawn at acceptance
+  signatureKey         String? // storage key of the drawn signature PNG
+  declineReason        String?
+  convertedAt          DateTime?
+  documentId           String? // signed copy stored on the project at conversion
+  aiDrafted            Boolean   @default(false)
+  createdById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  lineItems    EstimateLineItem[]
+  events       EstimateEvent[]
+  comments     EstimateComment[]
+
+  @@unique([organizationId, number, version])
+  @@index([organizationId, status])
+  @@index([companyId])
+  @@index([recipientUserId])
+  @@index([rootId])
+  @@index([status, validUntil])
+  @@map("estimate")
+}
+
+model EstimateLineItem {
+  id                String  @id @default(cuid())
+  estimateId        String
+  catalogItemId     String?
+  group             String? // section heading, e.g. a bundle name
+  name              String
+  description       String?
+  unit              String  @default("each")
+  billingType       String  @default("fixed") // "hourly" | "fixed" | "recurring"
+  recurringInterval String?
+  quantity          Decimal @default(1) @db.Decimal(12, 2)
+  unitPriceCents    Int
+  costCents         Int?
+  taxable           Boolean @default(true)
+  taxRateBps        Int     @default(0)
+  optional          Boolean @default(false)
+  selected          Boolean @default(true) // the client's choice for optional items
+  order             Int     @default(0)
+
+  estimate Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+
+  @@index([estimateId])
+  @@map("estimate_line_item")
+}
+
+model EstimateEvent {
+  id         String   @id @default(cuid())
+  estimateId String
+  actorId    String?
+  action     String // "created" | "sent" | "viewed" | "option_toggled" | "changes_requested" | "accepted" | "declined" | "expired" | "revised" | "converted" | "reminder_sent"
+  detail     String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  estimate Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+
+  @@index([estimateId, createdAt])
+  @@map("estimate_event")
+}
+
+model EstimateComment {
+  id         String   @id @default(cuid())
+  estimateId String
+  authorId   String
+  content    String
+  createdAt  DateTime @default(now())
+
+  estimate Estimate @relation(fields: [estimateId], references: [id], onDelete: Cascade)
+
+  @@index([estimateId, createdAt])
+  @@map("estimate_comment")
+}
+
+// ─── Recurring invoices ───
+
+model RecurringInvoice {
+  id                    String    @id @default(cuid())
+  organizationId        String
+  name                  String
+  companyId             String?
+  recipientUserId       String? // portal user the invoices are addressed to
+  projectId             String?
+  contractId            String?
+  interval              String    @default("monthly") // "weekly" | "monthly" | "quarterly" | "yearly"
+  intervalCount         Int       @default(1)
+  startDate             DateTime
+  endDate               DateTime?
+  nextRunAt             DateTime
+  lastRunAt             DateTime?
+  dueDays               Int       @default(14)
+  prorateFirst          Boolean   @default(false)
+  autoSend              Boolean   @default(true)
+  autoCharge            Boolean   @default(false)
+  stripeCustomerId      String?
+  stripePaymentMethodId String?
+  status                String    @default("active") // "active" | "paused" | "ended"
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company?               @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  items        RecurringInvoiceItem[]
+
+  @@index([organizationId])
+  @@index([status, nextRunAt])
+  @@index([companyId])
+  @@map("recurring_invoice")
+}
+
+model RecurringInvoiceItem {
+  id                 String @id @default(cuid())
+  recurringInvoiceId String
+  description        String
+  quantity           Int    @default(1)
+  unitPrice          Int // cents
+  taxRateBps         Int    @default(0)
+  order              Int    @default(0)
+
+  recurringInvoice RecurringInvoice @relation(fields: [recurringInvoiceId], references: [id], onDelete: Cascade)
+
+  @@index([recurringInvoiceId])
+  @@map("recurring_invoice_item")
+}
+
+// ─── Assets and licenses ───
+
+model Asset {
+  id                String    @id @default(cuid())
+  organizationId    String
+  companyId         String
+  // "device" | "software_license" | "domain" | "ssl_certificate" | "cloud_service" | "other"
+  type              String
+  name              String
+  vendor            String?
+  model             String?
+  serialNumber      String?
+  assignedTo        String? // person or location, free text
+  status            String    @default("active") // "active" | "retired" | "expired"
+  seats             Int?
+  purchaseDate      DateTime?
+  warrantyEndsAt    DateTime?
+  renewsAt          DateTime?
+  renewalNotifiedAt DateTime?
+  notes             String?
+  // Set by an RMM/PSA sync; (organizationId, externalSource, externalId) identifies the record upstream.
+  externalSource    String?
+  externalId        String?
+  metadata          Json?
+  clientVisible     Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  tickets      TicketAsset[]
+
+  @@unique([organizationId, externalSource, externalId])
+  @@index([organizationId, companyId])
+  @@index([organizationId, renewsAt])
+  @@index([organizationId, warrantyEndsAt])
+  @@map("asset")
+}
+
+model TicketAsset {
+  id       String @id @default(cuid())
+  ticketId String
+  assetId  String
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  asset  Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, assetId])
+  @@index([assetId])
+  @@map("ticket_asset")
+}
+
+// ─── Contracts and service agreements ───
+
+model Contract {
+  id                String    @id @default(cuid())
+  organizationId    String
+  companyId         String
+  name              String
+  type              String    @default("msa") // "msa" | "sla" | "retainer" | "block_hours" | "other"
+  status            String    @default("active") // "draft" | "active" | "expired" | "cancelled"
+  startsAt          DateTime
+  endsAt            DateTime?
+  autoRenew         Boolean   @default(false)
+  renewalNoticeDays Int       @default(30)
+  renewalNotifiedAt DateTime?
+  coveredMinutes    Int? // per period; null = no hours included
+  coveragePeriod    String    @default("monthly") // "monthly" | "quarterly" | "yearly" | "term"
+  overageRateCents  Int?
+  includedServices  String[]  @default([])
+  slaPolicyId       String?
+  documentUrl       String?
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  slaPolicy    SlaPolicy?   @relation(fields: [slaPolicyId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, companyId])
+  @@index([organizationId, endsAt])
+  @@index([slaPolicyId])
+  @@map("contract")
+}
+
+// ─── Announcements and service status ───
+
+model Announcement {
+  id             String    @id @default(cuid())
+  organizationId String
+  type           String // "general" | "maintenance" | "incident" | "security"
+  severity       String    @default("info") // "info" | "minor" | "major" | "critical"
+  status         String    @default("draft") // "draft" | "scheduled" | "published" | "expired"
+  incidentState  String? // "investigating" | "identified" | "monitoring" | "resolved"
+  title          String
+  body           String // markdown
+  impact         String?
+  windowStart    DateTime?
+  windowEnd      DateTime?
+  publishAt      DateTime?
+  publishedAt    DateTime?
+  expiresAt      DateTime?
+  resolvedAt     DateTime?
+  postmortem     String?
+  audienceType   String    @default("all") // "all" | "companies" | "contracts" | "assets"
+  audienceValue  String? // contract type or asset vendor for "contracts" / "assets"
+  categoryIds    String[]  @default([]) // ticket categories that show this incident's banner
+  publicStatus   Boolean   @default(false) // shown on the public status page when enabled
+  emailOnPublish Boolean   @default(false)
+  pushOnPublish  Boolean   @default(false)
+  reminderSentAt DateTime?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  updates      AnnouncementUpdate[]
+  audiences    AnnouncementAudience[]
+  dismissals   AnnouncementDismissal[]
+  tickets      TicketAnnouncement[]
+
+  @@index([organizationId, status])
+  @@index([status, publishAt])
+  @@index([status, expiresAt])
+  @@map("announcement")
+}
+
+model AnnouncementUpdate {
+  id             String   @id @default(cuid())
+  announcementId String
+  state          String? // incident state at the time of this update
+  body           String
+  authorId       String?
+  createdAt      DateTime @default(now())
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@index([announcementId, createdAt])
+  @@map("announcement_update")
+}
+
+model AnnouncementAudience {
+  id             String @id @default(cuid())
+  announcementId String
+  companyId      String
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, companyId])
+  @@index([companyId])
+  @@map("announcement_audience")
+}
+
+model AnnouncementDismissal {
+  id             String   @id @default(cuid())
+  announcementId String
+  userId         String
+  readAt         DateTime @default(now())
+  dismissed      Boolean  @default(false)
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@index([userId])
+  @@map("announcement_dismissal")
+}
+
+model AnnouncementTemplate {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  type           String
+  severity       String   @default("info")
+  title          String
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("announcement_template")
+}
+
+model TicketAnnouncement {
+  id             String @id @default(cuid())
+  ticketId       String
+  announcementId String
+
+  ticket       Ticket       @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, announcementId])
+  @@index([announcementId])
+  @@map("ticket_announcement")
 }

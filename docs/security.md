@@ -102,3 +102,59 @@ Because registration is anonymous, the consent screen shows a client-chosen name
 so it also shows where approving will send you, read from the pending request itself.
 Only approve a connection you started yourself. Review and disconnect apps anytime
 under Settings → Integrations → Connected apps.
+
+## Two-factor authentication
+
+Staff and clients can turn on two-factor authentication (an authenticator app, plus single-use backup codes) under their account settings. Owners can require it in **Settings → General → Security** for staff only or for everyone; an owner must enrol before turning it on. Until a user it applies to enrols, every API route except sign-in, account and enrolment answers `403` with `error: "TWO_FACTOR_REQUIRED"`, and the app sends them to the enrolment page. API keys and MCP tokens are not affected; they already resolve only for owners and admins.
+
+Magic-link and SSO sign-ins for a user with two-factor turned on still ask for a code: the sign-in becomes the same pending challenge a password sign-in gets.
+
+## Single sign-on
+
+With `SSO_ENABLED=true`, owners can connect an OpenID Connect provider for their workspace (Settings → General → Security). The issuer must be a public `https://` URL. The client secret is stored encrypted. The email domain must be proven with a DNS TXT record (`_atrium-sso.<domain>`) before anyone can sign in through it. Shared mail domains, and domains already used by another workspace, are refused.
+
+SSO never grants access on its own:
+
+- New accounts are created only for people with a pending invitation to that workspace, whatever `ALLOW_SIGNUPS` says.
+- Existing users must already be members or invitees.
+
+SAML is not offered.
+
+## Client data isolation
+
+Portal clients only ever see:
+
+- their own records;
+- their company's records, when they are a company admin;
+- what is explicitly shared with their company: client-visible assets, client documentation, and knowledge base articles and announcements whose audience includes them.
+
+The company always comes from the signed-in user's own contact, never from an id sent by the browser. Staff-only fields (internal notes, ticket events, catalog costs, estimate margins, asset metadata) are never included in portal responses.
+
+## Uploads
+
+Ticket, knowledge base and client documentation attachments are:
+
+- checked against the workspace's size limit and the blocked-extension list;
+- checked against their declared type, so a renamed executable or an HTML/SVG file is refused;
+- optionally scanned with ClamAV (`CLAMAV_HOST`).
+
+They are served with `X-Content-Type-Options: nosniff` and downloaded as attachments, except common image types. Markdown in tickets, articles and announcements is rendered without raw HTML and sanitised, and links open with `rel="noopener noreferrer nofollow"`.
+
+## Inbound email
+
+The email-to-ticket webhook is public but accepts only requests signed with the workspace's secret (HMAC-SHA256 over the timestamp and raw body, compared in constant time, with a 5-minute window). It is rate limited. Mail from unknown senders lands in a triage queue and never creates an account or portal access. The IMAP password and webhook secret are stored encrypted.
+
+## Audit log
+
+**Settings → Audit log** lists sensitive actions with who, when, IP address and browser, and can be filtered and exported to CSV (the export is itself logged). Recorded actions include:
+
+- sign-ins, failed sign-ins, sign-outs, password resets and two-factor changes;
+- role changes, member removals, invitations and company admin changes;
+- every CSV export;
+- invoice status changes, payments, Stripe connection changes and plan changes;
+- helpdesk merges, splits, deletions, bulk actions and settings;
+- knowledge base publishing and visibility changes;
+- estimate sends, acceptances and conversions;
+- contract renewals, announcement publishing, and sample content loads.
+
+Entries are kept for `AUDIT_LOG_RETENTION_DAYS` (default 365; `0` keeps them forever).

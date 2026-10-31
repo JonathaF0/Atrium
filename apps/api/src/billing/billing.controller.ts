@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, UseGuards } from "@nestjs/common";
 import { BillingService } from "./billing.service";
 import { CreateCheckoutDto, CreatePortalDto } from "./billing.dto";
 import { AuthGuard, RolesGuard, Roles, CurrentOrg, Public } from "../common";
+import { Audited } from "../audit-log/audited.decorator";
 
 @Controller("billing")
 @UseGuards(AuthGuard, RolesGuard)
@@ -36,6 +37,7 @@ export class BillingController {
 
   @Post("checkout")
   @Roles("owner", "admin")
+  @Audited({ action: "billing.checkout_started", targetType: "workspace", targetId: () => null, summary: (req) => `Started checkout for the ${(req.body as { planSlug?: string }).planSlug} plan`, metadata: (req) => ({ planSlug: (req.body as { planSlug?: string }).planSlug }) })
   async createCheckout(
     @Body() dto: CreateCheckoutDto,
     @CurrentOrg("id") orgId: string,
@@ -50,6 +52,7 @@ export class BillingController {
 
   @Post("portal")
   @Roles("owner", "admin")
+  @Audited({ action: "billing.portal_opened", targetType: "workspace", targetId: () => null, summary: "Opened the subscription billing portal" })
   async createPortal(
     @Body() dto: CreatePortalDto,
     @CurrentOrg("id") orgId: string,

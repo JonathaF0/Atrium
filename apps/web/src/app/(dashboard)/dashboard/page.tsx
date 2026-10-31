@@ -77,7 +77,7 @@ interface OverdueInvoice {
   invoiceNumber: string;
   type: string;
   amount: number | null;
-  lineItems: { quantity: number; unitPrice: number }[];
+  lineItems: { quantity: number; unitPrice: number; taxRateBps?: number }[];
   dueDate: string;
   projectId: string | null;
   project: { name: string } | null;

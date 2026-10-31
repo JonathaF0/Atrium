@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Logger,
+  Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
@@ -16,6 +17,7 @@ import type { PlanLimitResource } from "../common/decorators/plan-limit.decorato
 import type Stripe from "stripe";
 import type { Prisma, Subscription, SubscriptionPlan } from "@atrium/database";
 import { PORTAL_INVITATION_ROLE } from "../clients/invitations";
+import { AuditService } from "../service-core/audit.service";
 
 type SubscriptionWithPlan = Subscription & { plan: SubscriptionPlan };
 
@@ -42,6 +44,7 @@ export class BillingService {
     private prisma: PrismaService,
     private stripeService: StripeService,
     private config: ConfigService,
+    @Optional() private audit?: AuditService,
   ) {}
 
   async getPlans() {
@@ -440,6 +443,13 @@ export class BillingService {
     });
 
     this.logger.log(`Activated ${planSlug} plan for org ${orgId}`);
+    await this.audit?.record({
+      organizationId: orgId,
+      action: "billing.plan_changed",
+      targetType: "workspace",
+      summary: `Switched to the ${plan.name} plan`,
+      metadata: { planSlug },
+    });
   }
 
   private async handleSubscriptionUpdated(sub: Stripe.Subscription) {
@@ -489,6 +499,13 @@ export class BillingService {
     });
 
     this.logger.log(`Reverted org ${subscription.organizationId} to free plan`);
+    await this.audit?.record({
+      organizationId: subscription.organizationId,
+      action: "billing.plan_changed",
+      targetType: "workspace",
+      summary: "Subscription ended; back on the free plan",
+      metadata: { planSlug: "free" },
+    });
   }
 
   private async handlePaymentFailed(invoice: Stripe.Invoice) {

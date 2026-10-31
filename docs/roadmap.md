@@ -28,6 +28,10 @@ A living document tracking what's been shipped and what's planned for Atrium.
 - [x] Tags & labels (cross-entity tagging for projects, clients, tasks, files)
 - [x] CSV data export (projects, invoices, people, tasks)
 - [x] Dynamic favicon (updates to org logo)
+- [x] Helpdesk with SLA policies, email-to-ticket and automation rules
+- [x] Service catalog and estimates with portal acceptance and conversion
+- [x] Assets and licenses inventory, contracts and service agreements
+- [x] Announcements, incident timelines and public status page
 
 ## Planned
 
@@ -41,7 +45,7 @@ Make the portal the primary channel between agency and client.
 - [x] **Team members** -- Invite additional staff to your organization beyond owner/admin
 - [x] **Tags & labels** -- Cross-entity tagging for projects, clients, tasks, and files
 - [x] **Client-facing invoice payments** -- Pay invoices directly from the portal (Stripe Connect)
-- [ ] **Recurring invoices** -- Auto-generate invoices on a schedule for retainer clients
+- [x] **Recurring invoices** -- Auto-generate invoices on a schedule for retainer clients
 
 ### v1.4 -- Contracts, Approvals & Scheduling (April 2026)
 
@@ -59,15 +63,15 @@ Turn the portal into the system of record for client work.
 
 Enterprise auth, automation, and analytics.
 
-- [ ] **SAML/SSO** -- Enterprise single sign-on for teams and clients
-- [ ] **2FA/MFA** -- TOTP and passkey support via Better Auth plugins
+- [x] **SSO** -- OpenID Connect single sign-on per workspace (SAML still planned)
+- [x] **2FA/MFA** -- TOTP and backup codes, enforceable per workspace (passkeys still planned)
 - [ ] **Granular permissions** -- Per-project and per-section access control beyond owner/admin/member roles
-- [x] **Activity log** -- Records document responses and decision votes (org-wide audit log still planned)
+- [x] **Activity & audit log** -- Document responses and decision votes per project, plus a workspace audit log viewer
 - [ ] **Workflow automations** -- Trigger-action engine for automated task assignment, notifications, and status changes
-- [ ] **Reporting & analytics** -- Revenue trends, project metrics, client activity, and invoice aging dashboards
-- [ ] **Webhooks / Zapier integration** -- Notify external systems of portal events
+- [x] **Reporting & analytics** -- Tickets, SLA, CSAT, hours against contracts, revenue and invoice aging
+- [x] **Webhooks** -- Signed webhooks plus Slack and Discord for project, ticket, invoice, estimate and announcement events
 - [x] **MCP server** -- AI assistants can manage the workspace via OAuth sign-in or API keys ([docs](mcp.md))
-- [ ] **Knowledge base / help center** -- Self-service docs, FAQs, and guides for clients
+- [x] **Knowledge base / help center** -- Self-service docs, FAQs, and guides for clients
 
 ### v2.0 -- Platform & Extensibility (June 2026)
 

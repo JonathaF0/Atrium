@@ -9,6 +9,8 @@ export interface AuthResult {
   status: number;
   /** Better Auth's error code, when the body carried one. */
   code?: string;
+  /** The JSON body of a successful response, e.g. `{ twoFactorRedirect: true }`. */
+  data?: unknown;
 }
 
 const UNREACHABLE = "Could not reach the server. Check your connection and try again.";
@@ -59,7 +61,10 @@ export async function postAuth(path: string, body: unknown): Promise<AuthResult>
       : { ok: false, status: 0, message: NOT_SIGNED_IN };
   }
 
-  if (res.ok) return { ok: true, status: res.status };
+  if (res.ok) {
+    const data: unknown = await res.json().catch(() => undefined);
+    return { ok: true, status: res.status, data };
+  }
 
   const data = (await res.json().catch((err: unknown) => {
     console.error(err);

@@ -85,6 +85,7 @@ else
 
   # Apply partial unique index on time_entry (one running entry per user)
   DATABASE_URL="$MIGRATION_URL" bun run ./packages/database/scripts/migrate-time-entry-running-unique.ts || true
+  DATABASE_URL="$MIGRATION_URL" bun run ./packages/database/scripts/migrate-kb-fts.ts || true
 
   # Apply Row Level Security (locks out Supabase anon/authenticated roles)
   # Only needed when using Supabase — set SUPABASE=true to activate

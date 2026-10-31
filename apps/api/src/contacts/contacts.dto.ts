@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   ValidateIf,
   ValidateNested,
   IsDateString,
@@ -162,6 +163,11 @@ export class UpdateContactDto {
   @ValidateIf((_, v) => v !== null)
   @IsString()
   referredById?: string | null;
+
+  /** Sees every ticket, estimate and contract of their company in the portal (applied on update). */
+  @IsOptional()
+  @IsBoolean()
+  companyAdmin?: boolean;
 }
 
 export class CreateContactDto extends UpdateContactDto {}
@@ -261,6 +267,14 @@ export class UpdateCompanyDto {
   @Min(0)
   @Max(COMPANY_NUMBER_MAX)
   employeeCount?: number | null;
+
+  /** Support rate in cents; overrides project and member rates for ticket time. */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsInt()
+  @Min(0)
+  @Max(100_000_000)
+  hourlyRateCents?: number | null;
 }
 
 export class CreateCompanyDto extends UpdateCompanyDto {

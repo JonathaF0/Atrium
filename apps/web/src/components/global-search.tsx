@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
-import { Search, FolderOpen, CheckSquare, FileText, Contact, Building2, Loader2 } from "lucide-react";
+import { Search, FolderOpen, CheckSquare, FileText, Contact, Building2, BookOpen, LifeBuoy, Loader2 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useDebounce } from "@/hooks/use-debounce";
 
@@ -42,12 +42,27 @@ interface CompanyResult {
   name: string;
 }
 
+interface KbArticleResult {
+  id: string;
+  title: string;
+  status: string;
+}
+
+interface TicketResult {
+  id: string;
+  reference: string;
+  subject: string;
+  status: string;
+}
+
 interface SearchResults {
   projects: ProjectResult[];
   tasks: TaskResult[];
   files: FileResult[];
   contacts?: ContactResult[];
   companies?: CompanyResult[];
+  kbArticles?: KbArticleResult[];
+  tickets?: TicketResult[];
 }
 
 interface FlatItem {
@@ -73,6 +88,12 @@ function buildFlatItems(results: SearchResults): FlatItem[] {
   }
   for (const c of results.companies ?? []) {
     items.push({ key: `company-${c.id}`, href: `/dashboard/contacts/companies/${c.id}`, label: c.name });
+  }
+  for (const t of results.tickets ?? []) {
+    items.push({ key: `ticket-${t.id}`, href: `/dashboard/tickets/${t.id}`, label: `${t.reference} ${t.subject}`, sublabel: t.status.replace(/_/g, " ") });
+  }
+  for (const a of results.kbArticles ?? []) {
+    items.push({ key: `kb-${a.id}`, href: `/dashboard/kb/articles/${a.id}`, label: a.title, sublabel: a.status });
   }
   return items;
 }
@@ -160,8 +181,10 @@ export function GlobalSearch({ iconOnly = false }: { iconOnly?: boolean } = {}) 
   };
 
   // Portal clients appear once, as contacts.
-  const { projects = [], tasks = [], files = [], contacts = [], companies = [] } = results ?? {};
-  const hasResults = projects.length > 0 || tasks.length > 0 || files.length > 0 || contacts.length > 0 || companies.length > 0;
+  const { projects = [], tasks = [], files = [], contacts = [], companies = [], tickets = [], kbArticles = [] } = results ?? {};
+  const hasResults =
+    projects.length > 0 || tasks.length > 0 || files.length > 0 || contacts.length > 0 || companies.length > 0 ||
+    tickets.length > 0 || kbArticles.length > 0;
 
   return (
     <>
@@ -316,6 +339,45 @@ export function GlobalSearch({ iconOnly = false }: { iconOnly?: boolean } = {}) 
                             key={c.id}
                             href={`/dashboard/contacts/companies/${c.id}`}
                             label={c.name}
+                            active={activeIndex === idx}
+                            ref={(el) => { itemRefs.current[idx] = el; }}
+                            onMouseEnter={() => setActiveIndex(idx)}
+                            onClick={close}
+                          />
+                        );
+                      })}
+                    </Section>
+                  )}
+
+                  {tickets.length > 0 && (
+                    <Section icon={<LifeBuoy size={13} />} label="Tickets">
+                      {tickets.map((t) => {
+                        const idx = indexByKey.get(`ticket-${t.id}`)!;
+                        return (
+                          <ResultRow
+                            key={t.id}
+                            href={`/dashboard/tickets/${t.id}`}
+                            label={`${t.reference} ${t.subject}`}
+                            sublabel={t.status.replace(/_/g, " ")}
+                            active={activeIndex === idx}
+                            ref={(el) => { itemRefs.current[idx] = el; }}
+                            onMouseEnter={() => setActiveIndex(idx)}
+                            onClick={close}
+                          />
+                        );
+                      })}
+                    </Section>
+                  )}
+                  {kbArticles.length > 0 && (
+                    <Section icon={<BookOpen size={13} />} label="Knowledge base">
+                      {kbArticles.map((a) => {
+                        const idx = indexByKey.get(`kb-${a.id}`)!;
+                        return (
+                          <ResultRow
+                            key={a.id}
+                            href={`/dashboard/kb/articles/${a.id}`}
+                            label={a.title}
+                            sublabel={a.status.replace("_", " ")}
                             active={activeIndex === idx}
                             ref={(el) => { itemRefs.current[idx] = el; }}
                             onMouseEnter={() => setActiveIndex(idx)}

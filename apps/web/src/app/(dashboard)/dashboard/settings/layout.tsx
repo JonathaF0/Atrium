@@ -13,7 +13,11 @@ const SECTIONS: Section[] = [
   { href: "/dashboard/settings/branding", label: "Branding" },
   { href: "/dashboard/settings/team", label: "Team" },
   { href: "/dashboard/settings/billing", label: "Billing & Payments" },
+  { href: "/dashboard/settings/estimates", label: "Estimates & Tax" },
   { href: "/dashboard/settings/integrations", label: "Integrations" },
+  { href: "/dashboard/settings/status-page", label: "Status page" },
+  { href: "/dashboard/settings/audit-log", label: "Audit log" },
+  { href: "/dashboard/settings/helpdesk", label: "Helpdesk" },
 ];
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }): React.ReactElement {

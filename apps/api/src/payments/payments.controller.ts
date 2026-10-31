@@ -13,6 +13,7 @@ import { PaymentsService } from "./payments.service";
 import { CreateCheckoutDto, ConnectAuthorizeDto, SaveDirectKeysDto, SavePaymentMethodsDto } from "./payments.dto";
 import { AuthGuard, RolesGuard, Roles, CurrentUser, CurrentOrg, Public, RequiresFeature } from "../common";
 import { BillingService } from "../billing/billing.service";
+import { Audited } from "../audit-log/audited.decorator";
 
 @Controller("payments")
 @UseGuards(AuthGuard, RolesGuard)
@@ -49,6 +50,7 @@ export class PaymentsController {
 
   @Post("direct/save-key")
   @Roles("owner")
+  @Audited({ action: "payments.stripe_connected", targetType: "workspace", targetId: () => null, summary: "Connected Stripe with an API key" })
   @RequiresFeature("online_payments")
   saveDirectKey(
     @CurrentOrg("id") orgId: string,
@@ -59,12 +61,14 @@ export class PaymentsController {
 
   @Post("direct/remove-key")
   @Roles("owner")
+  @Audited({ action: "payments.stripe_disconnected", targetType: "workspace", targetId: () => null, summary: "Removed the Stripe API key" })
   removeDirectKey(@CurrentOrg("id") orgId: string) {
     return this.paymentsService.removeDirectKeys(orgId);
   }
 
   @Post("payment-methods")
   @Roles("owner")
+  @Audited({ action: "payments.methods_changed", targetType: "workspace", targetId: () => null, summary: "Changed accepted payment methods", metadata: (req) => ({ methods: (req.body as { paymentMethods?: string[] }).paymentMethods }) })
   savePaymentMethods(
     @CurrentOrg("id") orgId: string,
     @Body() dto: SavePaymentMethodsDto,
@@ -109,6 +113,7 @@ export class PaymentsController {
 
   @Post("connect/disconnect")
   @Roles("owner")
+  @Audited({ action: "payments.stripe_disconnected", targetType: "workspace", targetId: () => null, summary: "Disconnected the Stripe account" })
   disconnect(@CurrentOrg("id") orgId: string) {
     return this.paymentsService.disconnectAccount(orgId);
   }

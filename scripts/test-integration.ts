@@ -70,6 +70,13 @@ async function main(): Promise<void> {
       DATABASE_URL: TEST_DB_URL,
       DIRECT_URL: TEST_DB_URL,
     });
+  await $`bun run ./scripts/migrate-kb-fts.ts`
+    .cwd(join(root, "packages/database"))
+    .env({
+      ...process.env,
+      DATABASE_URL: TEST_DB_URL,
+      DIRECT_URL: TEST_DB_URL,
+    });
 
   console.log("Running integration tests...\n");
   const result = await $`bun test test/integration`

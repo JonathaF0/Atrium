@@ -16,6 +16,7 @@ import {
 import type { Response } from "express";
 import { InvoicesService } from "./invoices.service";
 import { InvoicePdfService } from "./invoice-pdf.service";
+import { calculateInvoiceTotal } from "../payments/invoice-total";
 import { FilesService, INVOICE_ALLOWED_MIMES, MAX_UPLOAD_BYTES, type TempUploadedFile } from "../files/files.service";
 import { TempFileInterceptor } from "../files/temp-file.interceptor";
 import {
@@ -39,6 +40,15 @@ import {
   toCsv,
 } from "../common";
 import type { CsvColumn } from "../common";
+import { Audited } from "../audit-log/audited.decorator";
+
+/** Status changes worth an audit entry; plain edits are not recorded. */
+const INVOICE_STATUS_ACTIONS: Record<string, string> = {
+  sent: "invoice.sent",
+  paid: "invoice.marked_paid",
+  overdue: "invoice.marked_overdue",
+  cancelled: "invoice.voided",
+};
 
 @Controller("invoices")
 @UseGuards(AuthGuard, RolesGuard)
@@ -145,6 +155,7 @@ export class InvoicesController {
 
   @Get("export")
   @Roles("owner", "admin")
+  @Audited({ action: "export.invoices", targetType: "export", targetId: () => null, summary: "Exported invoices as CSV" })
   async exportCsv(@CurrentOrg("id") orgId: string, @Res() res: Response) {
     const data = await this.invoicesService.exportAll(orgId);
     const columns: CsvColumn<(typeof data)[0]>[] = [
@@ -153,8 +164,7 @@ export class InvoicesController {
       { header: "Type", value: (r) => r.type },
       { header: "Amount", value: (r) => {
         if (r.amount != null) return (r.amount / 100).toFixed(2);
-        const total = r.lineItems.reduce((sum, li) => sum + li.quantity * li.unitPrice, 0);
-        return (total / 100).toFixed(2);
+        return (calculateInvoiceTotal(r) / 100).toFixed(2);
       }},
       { header: "Due Date", value: (r) => r.dueDate?.toISOString().split("T")[0] },
       { header: "Project", value: (r) => r.project?.name },
@@ -206,6 +216,11 @@ export class InvoicesController {
 
   @Put(":id")
   @Roles("owner", "admin")
+  @Audited({
+    action: (req) => INVOICE_STATUS_ACTIONS[(req.body as { status?: string } | undefined)?.status ?? ""] ?? null,
+    targetType: "invoice",
+    summary: (_req, result) => `Invoice ${(result as { invoiceNumber?: string } | undefined)?.invoiceNumber ?? ""} marked ${(result as { status?: string } | undefined)?.status ?? ""}`,
+  })
   update(
     @Param("id") id: string,
     @Body() dto: UpdateInvoiceDto,
@@ -216,6 +231,7 @@ export class InvoicesController {
 
   @Delete(":id")
   @Roles("owner", "admin")
+  @Audited({ action: "invoice.deleted", targetType: "invoice", summary: "Deleted an invoice" })
   remove(
     @Param("id") id: string,
     @CurrentOrg("id") orgId: string,

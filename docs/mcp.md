@@ -114,6 +114,9 @@ and similar) at the same URL with the same header. Nothing leaves your network.
 | `list_notes`, `add_note`, `delete_note` | Internal notes (never visible to clients) |
 | `list_pending_approvals` | Deliverables awaiting client approval |
 | `list_contacts`, `get_contact`, `add_contact_note` | CRM contacts (filterable by portal access) and their internal notes (team only) |
+| `list_tickets`, `get_ticket` | Helpdesk tickets with filters; a ticket's full thread, including internal notes |
+| `add_ticket_note`, `reply_to_ticket`, `update_ticket` | Add an internal note, reply to the client, or change status, priority or assignee |
+| `search_kb_articles`, `get_kb_article`, `list_kb_collections` | Look up knowledge base articles (staff-only articles included unless asked for client-visible results only) |
 
 23 tools in total. List tools take `page` and `limit` (max 50). `post_update` is
 visible to clients and may trigger email notifications.

@@ -65,10 +65,20 @@ async function run() {
   console.log("\nPushing database schema...");
   await $`bun run ./scripts/ensure-extensions.ts`.cwd(dbDir);
   await $`bunx prisma db push`.cwd(dbDir);
+  await $`bun run ./scripts/migrate-time-entry-running-unique.ts`.cwd(dbDir);
+  await $`bun run ./scripts/migrate-kb-fts.ts`.cwd(dbDir);
 
   // 6. Seed demo data
   console.log("\nSeeding demo data...");
   await $`bun run packages/database/src/seed.ts`.cwd(root);
+
+  // Sample IT-services content (catalog, KB drafts, canned responses, templates)
+  // for any workspaces that already exist; new workspaces can load it later from
+  // Settings or with `bun run db:seed:samples -- --org <slug>`.
+  if (!process.argv.includes("--no-samples")) {
+    console.log("\nLoading sample content into existing workspaces...");
+    await $`bun run apps/api/scripts/seed-samples.ts --all`.cwd(root);
+  }
 
   console.log("\n--- Ready! Run: bun run dev ---");
 }

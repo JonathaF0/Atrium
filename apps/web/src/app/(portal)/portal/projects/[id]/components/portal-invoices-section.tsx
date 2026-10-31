@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
-import { formatCurrency, invoiceTotal } from "@/lib/format";
+import { formatCurrency, formatTaxRate, invoiceTax, invoiceTotal } from "@/lib/format";
 import { useCurrency } from "@/lib/app-config";
 import { useToast } from "@/components/toast";
 import { Pagination } from "@/components/pagination";
@@ -16,6 +16,7 @@ interface LineItem {
   description: string;
   quantity: number;
   unitPrice: number;
+  taxRateBps?: number;
 }
 
 interface InvoiceListItem {
@@ -329,7 +330,12 @@ export function PortalInvoicesSection({
                           <tbody>
                             {inv.lineItems.map((li) => (
                               <tr key={li.id} className="border-t border-[var(--border)]">
-                                <td className="px-4 py-2">{li.description}</td>
+                                <td className="px-4 py-2">
+                                  {li.description}
+                                  {li.taxRateBps ? (
+                                    <span className="ml-1 text-xs text-[var(--muted-foreground)]">(tax {formatTaxRate(li.taxRateBps)})</span>
+                                  ) : null}
+                                </td>
                                 <td className="px-4 py-2 text-right">{li.quantity}</td>
                                 <td className="px-4 py-2 text-right">
                                   {formatCurrency(li.unitPrice, currency)}
@@ -341,6 +347,12 @@ export function PortalInvoicesSection({
                             ))}
                           </tbody>
                           <tfoot>
+                            {invoiceTax(inv.lineItems) > 0 && (
+                              <tr className="border-t border-[var(--border)]">
+                                <td colSpan={3} className="px-4 py-2 text-right text-[var(--muted-foreground)]">Tax</td>
+                                <td className="px-4 py-2 text-right">{formatCurrency(invoiceTax(inv.lineItems), currency)}</td>
+                              </tr>
+                            )}
                             <tr className="border-t border-[var(--border)] bg-[var(--muted)]">
                               <td colSpan={3} className="px-4 py-2 text-right font-medium">
                                 Total

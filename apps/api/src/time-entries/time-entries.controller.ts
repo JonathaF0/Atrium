@@ -13,6 +13,7 @@ import type { TimeEntry } from "@atrium/database";
 import {
   StartTimerDto, CreateManualEntryDto, UpdateTimeEntryDto, TimeEntryListQueryDto, GenerateInvoiceDto,
 } from "./time-entries.dto";
+import { Audited } from "../audit-log/audited.decorator";
 
 @Controller("time-entries")
 @UseGuards(AuthGuard, RolesGuard)
@@ -48,6 +49,7 @@ export class TimeEntriesController {
   // wedge the API.
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Get("report/export")
+  @Audited({ action: "export.time_entries", targetType: "export", targetId: () => null, summary: "Exported time entries as CSV" })
   async exportCsv(
     @CurrentOrg("id") orgId: string,
     @CurrentMember("role") role: string,

@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHmac, timingSafeEqual } from "crypto";
@@ -14,10 +15,12 @@ import { StripeService } from "../billing/stripe.service";
 import { SettingsService } from "../settings/settings.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { ContactSyncService } from "../contact-sync/contact-sync.service";
-import { calculateInvoiceTotal } from "./invoice-total";
+import { calculateInvoiceTax, calculateInvoiceTotal } from "./invoice-total";
 import { CLIENT_HIDDEN_STATUSES } from "../invoices/invoices.service";
+import { canSeeScheduleInvoice } from "../recurring-invoices/recurring-visibility";
 import { publicApiUrl } from "../common/helpers/public-api-url";
 import { getCurrency } from "../common/helpers/currency";
+import { AuditService } from "../service-core/audit.service";
 
 interface StripeConfig {
   stripe: Stripe;
@@ -61,6 +64,7 @@ export class PaymentsService {
     private config: ConfigService,
     private notifications: NotificationsService,
     private contactSync: ContactSyncService,
+    @Optional() private audit?: AuditService,
   ) {
     this.webUrl = this.config.get("WEB_URL", "http://localhost:3000");
     this.apiUrl = publicApiUrl(this.config);
@@ -75,7 +79,7 @@ export class PaymentsService {
     return !!this.config.get<string>("STRIPE_CONNECT_CLIENT_ID");
   }
 
-  private async getStripeConfig(orgId: string): Promise<StripeConfig> {
+  async getStripeConfig(orgId: string): Promise<StripeConfig> {
     const settings = await this.prisma.systemSettings.findUnique({
       where: { organizationId: orgId },
     });
@@ -392,6 +396,13 @@ export class PaymentsService {
       });
 
       this.logger.log(`Connected Stripe account ${accountId} for org ${orgId}`);
+      await this.audit?.record({
+        organizationId: orgId,
+        action: "payments.stripe_connected",
+        targetType: "workspace",
+        summary: "Connected a Stripe account",
+        metadata: { livemode: response.livemode ?? false },
+      });
       return { returnUrl };
     } catch (err) {
       if (err instanceof BadRequestException || err instanceof ForbiddenException) throw err;
@@ -457,13 +468,11 @@ export class PaymentsService {
 
     if (!invoice) throw new NotFoundException("Invoice not found");
 
-    if (invoice.projectId) {
-      const assignment = await this.prisma.projectClient.findFirst({
-        where: { projectId: invoice.projectId, userId },
-      });
-      if (!assignment) throw new ForbiddenException("Not assigned to this project");
-    } else {
-      throw new ForbiddenException("Invoice has no associated project");
+    const assignment = invoice.projectId
+      ? await this.prisma.projectClient.findFirst({ where: { projectId: invoice.projectId, userId } })
+      : null;
+    if (!assignment && !(await canSeeScheduleInvoice(this.prisma, invoice.recurringInvoiceId, userId, orgId))) {
+      throw new ForbiddenException(invoice.projectId ? "Not assigned to this project" : "Invoice has no associated project");
     }
 
     if (!["sent", "overdue"].includes(invoice.status)) {
@@ -508,6 +517,13 @@ export class PaymentsService {
             },
             quantity: li.quantity,
           }));
+    const taxCents = invoice.type === "uploaded" ? 0 : calculateInvoiceTax(invoice.lineItems);
+    if (taxCents > 0 && invoice.lineItems.length > 0) {
+      lineItems.push({
+        price_data: { currency: this.currency, product_data: { name: "Tax" }, unit_amount: taxCents },
+        quantity: 1,
+      });
+    }
 
     const rawMethods = settings?.stripePaymentMethods ?? [];
     const paymentMethodTypes = (rawMethods.length > 0 ? rawMethods : ["card"]) as Stripe.Checkout.SessionCreateParams.PaymentMethodType[];
@@ -606,6 +622,12 @@ export class PaymentsService {
       `Stripe account ${connectedAccountId} deauthorized — disabled payments for org ${settings.organizationId}`,
     );
     this.notifications.notifyStripeDisconnected(settings.organizationId);
+    await this.audit?.record({
+      organizationId: settings.organizationId,
+      action: "payments.stripe_disconnected",
+      targetType: "workspace",
+      summary: "The Stripe account was disconnected from Stripe's side",
+    });
   }
 
   private async handleCheckoutExpired(session: Record<string, unknown>) {
@@ -665,20 +687,45 @@ export class PaymentsService {
     });
     if (!invoice) return;
 
-    const totalCents = calculateInvoiceTotal(invoice);
+    await this.recordStripePayment(
+      invoice,
+      (session.amount_total as number) ?? calculateInvoiceTotal(invoice),
+      (session.payment_intent as string) ?? null,
+    );
+  }
 
-    // Idempotent update: only mark as paid if not already paid
+  /**
+   * Marks an invoice paid from a confirmed Stripe payment (Checkout or an
+   * off-session charge). Idempotent: returns false when it was already paid.
+   */
+  async recordStripePayment(
+    invoice: { id: string; invoiceNumber: string },
+    amountCents: number,
+    paymentIntentId: string | null,
+  ): Promise<boolean> {
     const result = await this.prisma.invoice.updateMany({
       where: { id: invoice.id, status: { not: "paid" } },
       data: {
         status: "paid",
         paidAt: new Date(),
-        paidAmount: (session.amount_total as number) ?? totalCents,
-        stripePaymentIntentId: (session.payment_intent as string) ?? null,
+        paidAmount: amountCents,
+        stripePaymentIntentId: paymentIntentId,
       },
     });
 
-    if (result.count === 0) return; // Already processed
+    if (result.count === 0) return false; // Already processed
+
+    const paid = await this.prisma.invoice.findUnique({ where: { id: invoice.id }, select: { organizationId: true } });
+    if (paid) {
+      await this.audit?.record({
+        organizationId: paid.organizationId,
+        action: "invoice.paid",
+        targetType: "invoice",
+        targetId: invoice.id,
+        summary: `Invoice ${invoice.invoiceNumber} paid online`,
+        metadata: { amountCents: amountCents, paymentIntentId },
+      });
+    }
 
     this.logger.log(`Invoice ${invoice.invoiceNumber} marked as paid via Stripe`);
     this.notifications.notifyInvoicePaid(invoice.id);
@@ -688,5 +735,6 @@ export class PaymentsService {
       Sentry.captureException(err);
       this.logger.error("Failed to record invoice paid on contact", err);
     }
+    return true;
   }
 }

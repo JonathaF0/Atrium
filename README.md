@@ -35,12 +35,22 @@ Most agencies juggle shared drives, spreadsheets, and scattered emails to keep c
 - **Invoicing** -- Draft, send, and track invoices with PDF generation and in-app preview
 - **Online payments** -- Clients pay invoices via Stripe Checkout (Direct Keys or Connect)
 - **Time tracking** -- Timers and manual entries per project and task, hourly rates, and one-click invoices from un-invoiced time
-- **Reports** -- Time reports by project, user, and task, with CSV export
+- **Reports** -- Time, tickets, SLA compliance, response times, satisfaction, hours against contracts, revenue and aging, with CSV export
+
+### Estimates
+- **Service catalog & estimates** -- Build estimates from catalog items and bundles with optional items, discounts, deposits and recurring services; clients accept with a signature in the portal and one click converts them to a project and invoices ([docs](docs/estimates.md))
+- **Recurring billing** -- Retainers and managed-services plans that invoice on a schedule, with optional card auto-charge and overdue reminders
 
 ### Contracts & approvals
 - **Documents** -- Send quotes, contracts, and NDAs for client acknowledgement or approval
 - **E-signatures** -- Signature fields, signing order, reminders, expiry, and a signed certificate with full audit trail
 - **Decisions** -- Ask clients to vote on options directly in the portal
+
+### Support & service
+- **Helpdesk** -- Clients open tickets in the portal or by email; staff work a queue with SLA timers on business hours, canned responses, automation rules, merge/split, time logging and CSAT ([docs](docs/helpdesk.md))
+- **Knowledge base** -- Public, client-only, per-client and staff-only articles with review workflow, version history, full-text search and ticket deflection, plus per-client documentation ([docs](docs/knowledge-base.md))
+- **Assets & contracts** -- Devices, licenses, domains and certificates per client with renewal alerts and a sync API; service agreements with covered hours and SLA policies ([docs](docs/client-services.md))
+- **Announcements & status** -- Targeted news, maintenance and incident timelines with an optional public status page
 
 ### Run the agency
 - **Calendar** -- Tasks, project dates, and invoice due dates on a month grid or agenda
@@ -53,7 +63,8 @@ Most agencies juggle shared drives, spreadsheets, and scattered emails to keep c
 
 ### Platform
 - **MCP server** -- Connect Claude, ChatGPT-style agents, or local models to manage your workspace via OAuth sign-in or API keys ([docs](docs/mcp.md))
-- **Authentication** -- Email/password and magic link via Better Auth; admins can issue password reset links
+- **Authentication** -- Email/password and magic link via Better Auth, two-factor authentication (enforceable per workspace), optional OpenID Connect SSO; admins can issue password reset links
+- **Audit log** -- Sign-ins, permission changes, exports and billing actions, filterable and exportable
 - **Dark mode** -- Per-user toggle, follows the system by default
 - **Email** -- Resend or any SMTP server, configurable per organization
 - **Self-hosted** -- Single Docker image with bundled Postgres option, Unraid template, ARM support; optional anonymous crash reporting ([Telemetry](docs/telemetry.md))
@@ -129,10 +140,14 @@ The unified image (`vibralabs/atrium`) bundles the API, web app, and a Caddy rev
 - [Stripe Payments Setup](docs/stripe.md)
 - [Development Guide & Scripts](docs/development.md)
 - [Security](docs/security.md)
+- [Helpdesk](docs/helpdesk.md)
+- [Knowledge Base](docs/knowledge-base.md)
+- [Estimates, Catalog & Recurring Billing](docs/estimates.md)
+- [Assets, Contracts, Announcements & Reports](docs/client-services.md)
 
 ## Roadmap
 
-Recurring invoices, SAML/SSO and 2FA, webhooks, workflow automations, and more. See the full [Roadmap](docs/roadmap.md).
+Granular permissions, workflow automations beyond the helpdesk, i18n, and more. See the full [Roadmap](docs/roadmap.md).
 
 ## Contributing
 

@@ -48,6 +48,12 @@ function makeBasePrisma() {
       findMany: mock(() => Promise.resolve([])),
       findFirst: mock(() => Promise.resolve(null)),
     },
+    contact: {
+      findFirst: mock(() => Promise.resolve(null as { companyId: string | null; companyAdmin: boolean } | null)),
+    },
+    recurringInvoice: {
+      findMany: mock(() => Promise.resolve([] as { id: string }[])),
+    },
     $transaction: mock((fn: (tx: Record<string, unknown>) => unknown) => {
       // Provide a minimal tx that proxies to the outer mock
       return fn({
@@ -444,6 +450,17 @@ describe("InvoicesService", () => {
       await service.findMine("user-1", orgId);
       const args = prisma.invoice.findMany.mock.calls.at(-1)?.[0] as { where: { projectId: { in: string[] } } };
       expect(args.where.projectId.in).toEqual(["proj-1"]);
+    });
+
+    test("a client also sees invoices from billing schedules addressed to them", async () => {
+      prisma.projectClient.findMany.mockImplementation(() => Promise.resolve([{ projectId: "proj-1" }]) as never);
+      prisma.recurringInvoice.findMany.mockImplementation(() => Promise.resolve([{ id: "sched-1" }]) as never);
+      await service.findMine("user-1", orgId);
+      const args = prisma.invoice.findMany.mock.calls.at(-1)?.[0] as { where: { OR: unknown[] } };
+      expect(args.where.OR).toEqual([{ projectId: { in: ["proj-1"] } }, { recurringInvoiceId: { in: ["sched-1"] } }]);
+      const scheduleArgs = prisma.recurringInvoice.findMany.mock.calls.at(-1)?.[0] as { where: { OR: unknown[] } };
+      expect(scheduleArgs.where.OR).toEqual([{ recipientUserId: "user-1" }]);
+      prisma.recurringInvoice.findMany.mockImplementation(() => Promise.resolve([]) as never);
     });
 
     test("an owner or admin sees invoices from every live project", async () => {

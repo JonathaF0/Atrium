@@ -40,6 +40,7 @@ export function PortalAccess({ contact, pendingInvite, onChanged }: Props): Reac
   const { resetLink, resettingMemberId, sendReset, closeReset } = usePasswordReset();
   const [copied, setCopied] = useState<boolean>(false);
   const [removing, setRemoving] = useState<boolean>(false);
+  const [savingAdmin, setSavingAdmin] = useState<boolean>(false);
 
   async function copyInviteLink(link: string): Promise<void> {
     if (!(await copyToClipboard(link))) {
@@ -68,6 +69,19 @@ export function PortalAccess({ contact, pendingInvite, onChanged }: Props): Reac
       showError(err instanceof Error ? err.message : "Failed to remove portal access");
     } finally {
       setRemoving(false);
+    }
+  }
+
+  async function setCompanyAdmin(companyAdmin: boolean): Promise<void> {
+    setSavingAdmin(true);
+    try {
+      await apiFetch(`/contacts/${contact.id}`, { method: "PUT", body: JSON.stringify({ companyAdmin }) });
+      success(companyAdmin ? "Now a company admin" : "No longer a company admin");
+      onChanged();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : "Failed to update company admin");
+    } finally {
+      setSavingAdmin(false);
     }
   }
 
@@ -112,6 +126,21 @@ export function PortalAccess({ contact, pendingInvite, onChanged }: Props): Reac
             <UserX size={14} aria-hidden /> Remove portal access
           </button>
         </span>
+        {contact.company && (
+          <label className="flex items-center gap-2 w-full text-[var(--muted-foreground)]">
+            <input
+              type="checkbox"
+              checked={contact.companyAdmin}
+              disabled={savingAdmin}
+              onChange={(e) => setCompanyAdmin(e.target.checked)}
+              data-testid="company-admin-toggle"
+            />
+            <span>
+              <span className="font-medium text-[var(--foreground)]">Company admin</span>
+              {` · sees all of ${contact.company.name}'s tickets, estimates, plans and contracts, not only their own`}
+            </span>
+          </label>
+        )}
         {resetLink && <ResetLinkModal resetLink={resetLink} onClose={closeReset} />}
       </div>
     );

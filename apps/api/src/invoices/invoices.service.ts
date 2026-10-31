@@ -6,11 +6,12 @@ import {
   Logger,
 } from "@nestjs/common";
 import * as Sentry from "@sentry/nestjs";
-import type { Invoice, InvoiceLineItem } from "@atrium/database";
+import type { Invoice, InvoiceLineItem, Prisma } from "@atrium/database";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { ContactSyncService } from "../contact-sync/contact-sync.service";
 import { calculateInvoiceTotal } from "../payments/invoice-total";
+import { canSeeScheduleInvoice, visibleScheduleIds } from "../recurring-invoices/recurring-visibility";
 import { paginationArgs, paginatedResponse } from "../common";
 import { CreateInvoiceDto, CreateUploadedInvoiceDto, UpdateInvoiceDto, InvoiceListQueryDto } from "./invoices.dto";
 
@@ -76,6 +77,7 @@ export class InvoicesService {
                 description: item.description,
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
+                taxRateBps: item.taxRateBps ?? 0,
               })),
             },
           },
@@ -88,6 +90,52 @@ export class InvoicesService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Creates a draft itemized invoice inside the caller's transaction, so a multi-step
+   * operation (estimate conversion) commits or rolls back as a whole.
+   */
+  async createDraftInTx(
+    tx: Prisma.TransactionClient,
+    orgId: string,
+    data: {
+      projectId?: string | null;
+      dueDate?: Date | null;
+      notes?: string | null;
+      estimateId?: string | null;
+      lineItems: Array<{ description: string; quantity: number; unitPrice: number; taxRateBps?: number }>;
+    },
+  ): Promise<Invoice & { lineItems: InvoiceLineItem[] }> {
+    const lastInvoice = await tx.invoice.findFirst({
+      where: { organizationId: orgId },
+      orderBy: { invoiceNumber: "desc" },
+      select: { invoiceNumber: true },
+    });
+    let nextNumber = 1;
+    const match = lastInvoice?.invoiceNumber.match(/INV-(\d+)/);
+    if (match) nextNumber = parseInt(match[1], 10) + 1;
+
+    return tx.invoice.create({
+      data: {
+        invoiceNumber: `INV-${String(nextNumber).padStart(4, "0")}`,
+        status: "draft",
+        dueDate: data.dueDate ?? undefined,
+        notes: data.notes ?? undefined,
+        projectId: data.projectId ?? undefined,
+        estimateId: data.estimateId ?? undefined,
+        organizationId: orgId,
+        lineItems: {
+          create: data.lineItems.map((item) => ({
+            description: item.description,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            taxRateBps: item.taxRateBps ?? 0,
+          })),
+        },
+      },
+      include: { lineItems: true },
+    });
   }
 
   async createUploaded(dto: CreateUploadedInvoiceDto, fileId: string, orgId: string, retries = 0): Promise<Invoice> {
@@ -224,10 +272,14 @@ export class InvoicesService {
       projectIds = clientProjects.map((pc) => pc.projectId);
     }
 
+    // Invoices from a billing schedule addressed to the client need no project.
+    const scheduleIds = !isPrivileged && !projectId ? await visibleScheduleIds(this.prisma, userId, orgId) : [];
     const where = {
       organizationId: orgId,
-      projectId: { in: projectIds },
       status: { notIn: CLIENT_HIDDEN_STATUSES },
+      ...(scheduleIds.length > 0
+        ? { OR: [{ projectId: { in: projectIds } }, { recurringInvoiceId: { in: scheduleIds } }] }
+        : { projectId: { in: projectIds } }),
     };
 
     const [data, total] = await Promise.all([
@@ -255,14 +307,10 @@ export class InvoicesService {
     if (!invoice) throw new NotFoundException("Invoice not found");
 
     if (!isPrivileged) {
-      if (invoice.projectId) {
-        const assignment = await this.prisma.projectClient.findFirst({
-          where: { projectId: invoice.projectId, userId },
-        });
-        if (!assignment) {
-          throw new ForbiddenException("Not assigned to this project");
-        }
-      } else {
+      const assignment = invoice.projectId
+        ? await this.prisma.projectClient.findFirst({ where: { projectId: invoice.projectId, userId } })
+        : null;
+      if (!assignment && !(await canSeeScheduleInvoice(this.prisma, invoice.recurringInvoiceId, userId, orgId))) {
         throw new ForbiddenException("Not assigned to this project");
       }
     }
@@ -334,6 +382,7 @@ export class InvoicesService {
                 description: item.description,
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
+                taxRateBps: item.taxRateBps ?? 0,
               })),
             },
           },
@@ -401,7 +450,7 @@ export class InvoicesService {
           SELECT i.status,
             COALESCE(SUM(
               CASE WHEN i.type = 'uploaded' THEN COALESCE(i.amount, 0)
-                   ELSE COALESCE(li.quantity * li."unitPrice", 0)
+                   ELSE COALESCE(li.quantity * li."unitPrice" + ROUND(li.quantity * li."unitPrice" * li."taxRateBps" / 10000.0), 0)
               END
             ), 0) as total
           FROM "invoice" i
@@ -415,7 +464,7 @@ export class InvoicesService {
           SELECT i.status,
             COALESCE(SUM(
               CASE WHEN i.type = 'uploaded' THEN COALESCE(i.amount, 0)
-                   ELSE COALESCE(li.quantity * li."unitPrice", 0)
+                   ELSE COALESCE(li.quantity * li."unitPrice" + ROUND(li.quantity * li."unitPrice" * li."taxRateBps" / 10000.0), 0)
               END
             ), 0) as total
           FROM "invoice" i

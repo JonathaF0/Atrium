@@ -22,7 +22,6 @@ const nextConfig: NextConfig = {
   // aren't paid for a page that only redirects.
   async redirects() {
     return [
-      { source: "/portal", destination: "/portal/projects", permanent: false },
       { source: "/dashboard/settings", destination: "/dashboard/settings/workspace", permanent: false },
     ];
   },

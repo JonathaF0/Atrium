@@ -3,8 +3,10 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { loginRedirectPath } from "@/lib/login-redirect";
 import Link from "next/link";
 import { SignOutButton } from "./sign-out-button";
+import { PortalServiceLinks } from "./portal-service-links";
 import { getSession } from "@/lib/auth";
 import { NotificationBell, NotificationProvider } from "@/components/notification-bell";
+import { AnnouncementsNavLink } from "@/components/announcements-nav-link";
 import { DynamicFavicon } from "@/components/dynamic-favicon";
 import { PreviewModeProvider } from "@/lib/preview-mode";
 import { PreviewBanner } from "@/components/preview-banner";
@@ -12,6 +14,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { serverFetch } from "@/lib/server-api";
 import { logoSrc as buildLogoSrc } from "@/lib/logo-src";
 import { SessionProvider } from "@/lib/session-context";
+import { mustEnrollTwoFactor, TWO_FACTOR_SETUP_PATH } from "@/lib/two-factor";
 
 async function getBranding() {
   try {
@@ -41,6 +44,8 @@ async function getOrg(): Promise<{ id: string; name: string; role: string } | nu
   }
 }
 
+const portalLinkClass = "text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]";
+
 export default async function PortalLayout({
   children,
 }: {
@@ -53,6 +58,9 @@ export default async function PortalLayout({
   ]);
   if (!session) {
     redirect(await loginRedirectPath());
+  }
+  if (await mustEnrollTwoFactor()) {
+    redirect(TWO_FACTOR_SETUP_PATH);
   }
 
   const orgName: string | null = org?.name || null;
@@ -77,27 +85,45 @@ export default async function PortalLayout({
         >
           <DynamicFavicon href={logoSrc || "/icon-64.png"} />
           <PreviewBanner />
-          <header className="border-b border-[var(--border)] px-4 sm:px-6 py-4 flex items-center gap-2 sm:gap-3">
-            {!branding?.hideLogo && (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={logoSrc || "/icon-64.png"} alt="Logo" className="h-8 w-8 object-contain shrink-0" />
-            )}
-            <span className="font-semibold flex-1 min-w-0 truncate">{orgName || "Atrium"}</span>
-            <Link
-              href="/portal"
-              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-            >
-              Projects
-            </Link>
-            <Link
-              href="/portal/settings"
-              className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-            >
-              Settings
-            </Link>
-            <NotificationBell />
-            <ThemeToggle />
-            <SignOutButton />
+          <header className="border-b border-[var(--border)]">
+            <div className="px-4 sm:px-6 py-4 flex items-center gap-2 sm:gap-3">
+              {!branding?.hideLogo && (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={logoSrc || "/icon-64.png"} alt="Logo" className="h-8 w-8 object-contain shrink-0" />
+              )}
+              <span className="font-semibold flex-1 min-w-0 truncate">{orgName || "Atrium"}</span>
+              <NotificationBell />
+              <ThemeToggle />
+              <SignOutButton />
+            </div>
+            <nav aria-label="Portal" className="px-4 sm:px-6 pb-3 flex items-center gap-4 overflow-x-auto whitespace-nowrap">
+              <Link href="/portal" className={portalLinkClass}>
+                Home
+              </Link>
+              <Link href="/portal/tickets" className={portalLinkClass}>
+                Support
+              </Link>
+              <Link href="/portal/projects" className={portalLinkClass}>
+                Projects
+              </Link>
+              <Link href="/portal/billing" className={portalLinkClass}>
+                Billing
+              </Link>
+              <Link href="/portal/estimates" className={portalLinkClass}>
+                Estimates
+              </Link>
+              <Link href="/portal/kb" className={portalLinkClass}>
+                Help center
+              </Link>
+              <Link href="/portal/docs" className={portalLinkClass}>
+                Documentation
+              </Link>
+              <PortalServiceLinks />
+              <AnnouncementsNavLink className={portalLinkClass} />
+              <Link href="/portal/settings" className={portalLinkClass}>
+                Settings
+              </Link>
+            </nav>
           </header>
           <main className="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8">{children}</main>
           {branding?.poweredBy && (

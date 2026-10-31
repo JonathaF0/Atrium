@@ -34,6 +34,7 @@ import {
   CurrentOrg,
   contentDisposition,
 } from "../common";
+import { Audited } from "../audit-log/audited.decorator";
 
 const MAX_CSV_BYTES = 2 * 1024 * 1024;
 
@@ -59,6 +60,7 @@ export class ContactsController {
   // Static routes (e.g. export, import) must be declared before ":id".
 
   @Get("export")
+  @Audited({ action: "export.contacts", targetType: "export", targetId: () => null, summary: "Exported contacts as CSV" })
   async exportCsv(
     @CurrentOrg("id") orgId: string,
     @Query() query: ListContactsQueryDto,
@@ -120,6 +122,15 @@ export class ContactsController {
   }
 
   @Put(":id")
+  @Audited({
+    // Only the company-admin flag widens what a client can see, so only it is audited.
+    action: (req) => {
+      const flag: unknown = (req.body as { companyAdmin?: unknown } | undefined)?.companyAdmin;
+      if (flag === undefined) return null;
+      return flag ? "contact.company_admin_granted" : "contact.company_admin_revoked";
+    },
+    targetType: "contact",
+  })
   update(
     @Param("id") id: string,
     @Body() dto: UpdateContactDto,

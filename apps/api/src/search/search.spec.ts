@@ -40,6 +40,15 @@ const mockPrisma = {
   company: {
     findMany: mock(() => Promise.resolve([])),
   },
+  kbArticle: {
+    findMany: mock(() => Promise.resolve([])),
+  },
+  ticket: {
+    findMany: mock(() => Promise.resolve([] as unknown[])),
+  },
+  serviceSettings: {
+    findUnique: mock(() => Promise.resolve({ ticketPrefix: "TKT" })),
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +97,8 @@ function clearAllMocks() {
   mockPrisma.member.findMany.mockClear();
   mockPrisma.contact.findMany.mockClear();
   mockPrisma.company.findMany.mockClear();
+  mockPrisma.kbArticle.findMany.mockClear();
+  mockPrisma.ticket.findMany.mockClear();
 }
 
 function resetAllMocksToEmpty() {
@@ -97,6 +108,7 @@ function resetAllMocksToEmpty() {
   mockPrisma.member.findMany.mockReturnValue(Promise.resolve([]));
   mockPrisma.contact.findMany.mockReturnValue(Promise.resolve([]));
   mockPrisma.company.findMany.mockReturnValue(Promise.resolve([]));
+  mockPrisma.ticket.findMany.mockReturnValue(Promise.resolve([]));
 }
 
 // ---------------------------------------------------------------------------
@@ -117,10 +129,10 @@ describe("SearchService", () => {
   // =========================================================================
 
   describe("return shape", () => {
-    it("returns projects, tasks, files, contacts and companies, and no clients group", async () => {
+    it("returns projects, tasks, files, contacts, companies and KB articles, and no clients group", async () => {
       const result = await service.search(ORG, QUERY);
 
-      expect(Object.keys(result).sort()).toEqual(["companies", "contacts", "files", "projects", "tasks"]);
+      expect(Object.keys(result).sort()).toEqual(["companies", "contacts", "files", "kbArticles", "projects", "tasks", "tickets"]);
       expect(result).not.toHaveProperty("clients");
     });
 
@@ -157,6 +169,19 @@ describe("SearchService", () => {
       expect(result.contacts).toEqual([
         { id: "c-1", name: "Alice Alpha", email: "alice@example.com", company: "Alpha Corp" },
       ]);
+    });
+  });
+
+  describe("knowledge base search", () => {
+    it("matches article titles in the org, skipping archived ones", async () => {
+      await service.search(ORG, QUERY);
+      const args = (mockPrisma.kbArticle.findMany.mock.calls[0] as unknown as [PrismaArgs])[0];
+      expect(args.where).toEqual({
+        organizationId: ORG,
+        status: { not: "archived" },
+        title: { contains: QUERY, mode: "insensitive" },
+      });
+      expect(args.take).toBe(5);
     });
   });
 
@@ -514,6 +539,31 @@ describe("SearchService", () => {
         "owner",
         "admin",
       ]);
+    });
+  });
+
+  // =========================================================================
+  // Tickets
+  // =========================================================================
+
+  describe("tickets", () => {
+    it("matches a ticket number with or without the prefix and adds its reference", async () => {
+      mockPrisma.ticket.findMany.mockReturnValue(Promise.resolve([{ id: "t1", number: 1042, subject: "Printer", status: "open" }]));
+      const result = await service.search(ORG, "TKT-1042");
+      const call = (mockPrisma.ticket.findMany as ReturnType<typeof mock>).mock.calls[0][0] as PrismaArgs;
+      expect(call.where).toEqual({
+        organizationId: ORG,
+        OR: [{ subject: { contains: "TKT-1042", mode: "insensitive" } }, { number: 1042 }],
+      });
+      expect(call.take).toBe(5);
+      expect(result.tickets).toEqual([{ id: "t1", number: 1042, subject: "Printer", status: "open", reference: "TKT-1042" }]);
+    });
+
+    it("searches only subjects for text queries", async () => {
+      mockPrisma.ticket.findMany.mockReturnValue(Promise.resolve([]));
+      await service.search(ORG, "printer");
+      const call = (mockPrisma.ticket.findMany as ReturnType<typeof mock>).mock.calls[0][0] as PrismaArgs;
+      expect(call.where).toEqual({ organizationId: ORG, OR: [{ subject: { contains: "printer", mode: "insensitive" } }] });
     });
   });
 

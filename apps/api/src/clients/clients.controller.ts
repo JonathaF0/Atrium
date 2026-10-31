@@ -23,6 +23,7 @@ import { ClientsService } from "./clients.service";
 import { presentInvitations } from "./invitations";
 import { ChangeRoleDto, ListMembersQueryDto, SetRateDto } from "./clients.dto";
 import { UpdateClientProfileDto } from "./client-profile.dto";
+import { Audited } from "../audit-log/audited.decorator";
 
 @Controller("clients")
 @UseGuards(AuthGuard, RolesGuard)
@@ -73,6 +74,7 @@ export class ClientsController {
 
   @Delete(":id")
   @Roles("owner", "admin")
+  @Audited({ action: "member.removed", targetType: "member", summary: "Removed a member from the workspace" })
   async remove(
     @Param("id") memberId: string,
     @CurrentOrg("id") orgId: string,
@@ -84,6 +86,7 @@ export class ClientsController {
 
   @Post(":id/reset-password")
   @Roles("owner", "admin")
+  @Audited({ action: "member.password_reset_link", targetType: "member", summary: "Created a password reset link for a member" })
   async resetPassword(
     @Param("id") memberId: string,
     @CurrentOrg("id") orgId: string,
@@ -100,6 +103,12 @@ export class ClientsController {
 
   @Put(":id/role")
   @Roles("owner")
+  @Audited({
+    action: "member.role_changed",
+    targetType: "member",
+    summary: (req) => `Changed a member's role to ${(req.body as { role?: string }).role}`,
+    metadata: (req) => ({ role: (req.body as { role?: string }).role }),
+  })
   async changeRole(
     @Param("id") memberId: string,
     @Body() dto: ChangeRoleDto,

@@ -38,6 +38,20 @@ import { McpAuthModule } from "./mcp-auth/mcp-auth.module";
 import { ContactSyncModule } from "./contact-sync/contact-sync.module";
 import { ContactsModule } from "./contacts/contacts.module";
 import { OrganizationModule } from "./organization/organization.module";
+import { ServiceCoreModule } from "./service-core/service-core.module";
+import { ReportsModule } from "./reports/reports.module";
+import { AssetsModule } from "./assets/assets.module";
+import { ContractsModule } from "./contracts/contracts.module";
+import { AnnouncementsModule } from "./announcements/announcements.module";
+import { PortalHomeModule } from "./portal-home/portal-home.module";
+import { KbModule } from "./kb/kb.module";
+import { ClientDocsModule } from "./client-docs/client-docs.module";
+import { CatalogModule } from "./catalog/catalog.module";
+import { EstimatesModule } from "./estimates/estimates.module";
+import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
+import { SecurityModule } from "./security/security.module";
+import { AuditLogModule } from "./audit-log/audit-log.module";
+import { HelpdeskModule } from "./helpdesk/helpdesk.module";
 import { HealthController } from "./health.controller";
 import { SessionMiddleware } from "./auth/session.middleware";
 import { PreviewModeMiddleware } from "./auth/preview-mode.middleware";
@@ -72,6 +86,7 @@ import { PlanGuard } from "./common/guards/plan.guard";
     }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: parseInt(process.env.THROTTLE_LIMIT || "100", 10) }]),
     PrismaModule,
+    ServiceCoreModule,
     ContactSyncModule,
     ContactsModule,
     AuthModule,
@@ -105,6 +120,19 @@ import { PlanGuard } from "./common/guards/plan.guard";
     McpModule,
     McpAuthModule,
     OrganizationModule,
+    ReportsModule,
+    AssetsModule,
+    ContractsModule,
+    AnnouncementsModule,
+    PortalHomeModule,
+    KbModule,
+    ClientDocsModule,
+    CatalogModule,
+    EstimatesModule,
+    RecurringInvoicesModule,
+    SecurityModule,
+    AuditLogModule,
+    HelpdeskModule,
   ],
   controllers: [HealthController],
   providers: [

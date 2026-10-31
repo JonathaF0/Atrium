@@ -80,7 +80,8 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 import { ValidationPipe } from "@nestjs/common";
 import type { CorsOptionsDelegate } from "@nestjs/common/interfaces/external/cors-options.interface";
-import type { Request } from "express";
+import { json } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { isPublicOAuthPath } from "./common/helpers/public-oauth-cors";
 import { Logger } from "nestjs-pino";
 import cookieParser from "cookie-parser";
@@ -101,6 +102,12 @@ async function bootstrap() {
   expressApp.set("trust proxy", true);
 
   app.use(cookieParser());
+  // Inbound helpdesk email can carry attachments: that route alone gets a larger JSON limit (raw body kept for its signature).
+  // Wrapped in a named function: Nest skips its own JSON parser if it finds a layer named "jsonParser".
+  const inboundJson = json({ limit: "30mb", verify: (req: Request, _res, buf: Buffer) => void ((req as Request & { rawBody?: Buffer }).rawBody = buf) });
+  app.use("/api/helpdesk/inbound", function inboundEmailBody(req: Request, res: Response, next: NextFunction) {
+    inboundJson(req, res, next);
+  });
   app.use(compression({ filter: shouldCompress }));
 
   app.use(
@@ -135,7 +142,8 @@ async function bootstrap() {
       callback(null, { origin: "*", credentials: false });
       return;
     }
-    callback(null, { origin: webOrigin, credentials: true });
+    // Exposed so CSV and PDF downloads keep their names when the web app and API are on different origins.
+    callback(null, { origin: webOrigin, credentials: true, exposedHeaders: ["Content-Disposition"] });
   };
   app.enableCors(corsDelegate);
 

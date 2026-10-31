@@ -32,6 +32,7 @@ import {
   toCsv,
 } from "../common";
 import type { CsvColumn } from "../common";
+import { Audited } from "../audit-log/audited.decorator";
 
 @Controller("projects")
 @UseGuards(AuthGuard, RolesGuard)
@@ -82,6 +83,7 @@ export class ProjectsController {
 
   @Get("export")
   @Roles("owner", "admin")
+  @Audited({ action: "export.projects", targetType: "export", targetId: () => null, summary: "Exported projects as CSV" })
   async exportCsv(@CurrentOrg("id") orgId: string, @Res() res: Response) {
     const data = await this.projectsService.exportAll(orgId);
     const columns: CsvColumn<(typeof data)[0]>[] = [

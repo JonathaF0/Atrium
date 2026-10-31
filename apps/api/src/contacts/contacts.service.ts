@@ -665,6 +665,7 @@ export class ContactsService {
           address: dto.address,
           description: aboutText(dto.description),
           status: dto.status,
+          companyAdmin: dto.companyAdmin,
           ...links,
         },
       });

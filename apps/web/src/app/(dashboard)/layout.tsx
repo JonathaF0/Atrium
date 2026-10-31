@@ -19,6 +19,7 @@ import { serverFetch } from "@/lib/server-api";
 import { logoSrc as buildLogoSrc } from "@/lib/logo-src";
 import { SessionProvider } from "@/lib/session-context";
 import { initials } from "@/lib/initials";
+import { mustEnrollTwoFactor, TWO_FACTOR_SETUP_PATH } from "@/lib/two-factor";
 
 async function getSession() {
   try {
@@ -128,6 +129,10 @@ export default async function DashboardLayout({
 
   if (!session) {
     redirect(await loginRedirectPath());
+  }
+
+  if (await mustEnrollTwoFactor()) {
+    redirect(TWO_FACTOR_SETUP_PATH);
   }
 
   // Clients (members) should use the portal, not the dashboard
