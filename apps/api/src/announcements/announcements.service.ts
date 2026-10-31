@@ -214,11 +214,9 @@ export class AnnouncementsService {
       windowEnd,
     });
 
-    let incidentState: string | null = type === "incident" ? (dto.incidentState ?? current.incidentState ?? "investigating") : null;
-    if (type !== "incident") incidentState = null;
-    let resolvedAt = current.resolvedAt;
-    if (incidentState === "resolved" && !resolvedAt) resolvedAt = new Date();
-    if (incidentState !== "resolved") resolvedAt = null;
+    const incidentState: string | null =
+      type === "incident" ? (dto.incidentState ?? current.incidentState ?? "investigating") : null;
+    const resolvedAt = incidentState === "resolved" ? (current.resolvedAt ?? new Date()) : null;
 
     const data: Prisma.AnnouncementUpdateInput = {
       type,
@@ -238,11 +236,7 @@ export class AnnouncementsService {
       pushOnPublish: dto.pushOnPublish,
     };
     // A changed window deserves a fresh reminder.
-    if (
-      (current.windowStart?.getTime() ?? null) !== (windowStart?.getTime() ?? null)
-    ) {
-      data.reminderSentAt = null;
-    }
+    if ((current.windowStart?.getTime() ?? null) !== (windowStart?.getTime() ?? null)) data.reminderSentAt = null;
     if (audience) {
       data.audienceType = audience.audienceType;
       data.audienceValue = audience.audienceValue;
