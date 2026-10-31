@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { currencySymbol, formatCurrency, invoiceTotal } from "./format";
+import { currencySymbol, formatCurrency, formatTaxRate, invoiceTax, invoiceTotal } from "./format";
 
 describe("formatCurrency", () => {
   it("defaults to USD", () => {
@@ -39,6 +39,21 @@ describe("invoiceTotal", () => {
       { quantity: 1, unitPrice: 250 },
     ];
     expect(invoiceTotal({ type: "standard", amount: null, lineItems })).toBe(3250);
+  });
+
+  it("adds per-line tax", () => {
+    const lineItems = [
+      { quantity: 3, unitPrice: 3333, taxRateBps: 825 },
+      { quantity: 1, unitPrice: 1000, taxRateBps: 0 },
+    ];
+    expect(invoiceTax(lineItems)).toBe(825);
+    expect(invoiceTotal({ type: "itemized", lineItems })).toBe(9999 + 825 + 1000);
+  });
+
+  it("formats tax rates without trailing zeros", () => {
+    expect(formatTaxRate(825)).toBe("8.25%");
+    expect(formatTaxRate(1000)).toBe("10%");
+    expect(formatTaxRate(750)).toBe("7.5%");
   });
 
   it("is 0 when there is nothing to add up", () => {
