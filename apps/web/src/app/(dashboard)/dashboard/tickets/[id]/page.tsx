@@ -79,7 +79,7 @@ interface StaffTicket {
   mergedInto: { id: string; number: number; subject: string } | null;
   mergedFrom: { id: string; number: number; subject: string }[];
   company: { id: string; name: string } | null;
-  contact: { id: string; name: string; email: string | null } | null;
+  contact: { id: string; name: string; email: string | null; companyAdmin: boolean } | null;
   project: { id: string; name: string } | null;
   task: { id: string; title: string; projectId: string } | null;
   messages: TicketMessage[];
@@ -317,6 +317,20 @@ export default function StaffTicketPage(): React.ReactElement {
               )}
               {ticket.requesterEmail && <div className="text-xs text-[var(--muted-foreground)] break-all">{ticket.requesterEmail}</div>}
               {!ticket.requesterUserId && !ticket.triage && <div className="text-xs text-[var(--muted-foreground)]">No portal login</div>}
+              {ticket.contact && ticket.company && (
+                <label className="flex items-center gap-1 text-xs mt-1" title="Company admins see all of their company's tickets in the portal">
+                  <input
+                    type="checkbox"
+                    checked={ticket.contact.companyAdmin}
+                    onChange={(e) =>
+                      void run(() =>
+                        apiFetch(`/helpdesk/contacts/${ticket.contact?.id}/company-admin`, { method: "PUT", body: JSON.stringify({ companyAdmin: e.target.checked }) }),
+                      )
+                    }
+                  />
+                  Company admin
+                </label>
+              )}
             </div>
             {ticket.company && (
               <div className="text-sm">

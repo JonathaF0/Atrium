@@ -10,6 +10,7 @@ import {
   BusinessHoursDto,
   CannedResponseDto,
   CategoryDto,
+  CompanyAdminDto,
   HelpdeskSettingsDto,
   HolidayDto,
   InboundSettingsDto,
@@ -46,6 +47,17 @@ export class HelpdeskSettingsController {
   @Get("staff")
   staff(@CurrentOrg("id") orgId: string) {
     return this.settings.staff(orgId);
+  }
+
+  @Put("contacts/:contactId/company-admin")
+  setCompanyAdmin(
+    @Param("contactId") contactId: string,
+    @CurrentOrg("id") orgId: string,
+    @CurrentUser("id") userId: string,
+    @Body() dto: CompanyAdminDto,
+    @Req() req: Request,
+  ) {
+    return this.settings.setCompanyAdmin(orgId, contactId, userId, dto.companyAdmin, req);
   }
 
   // ─── Inbound ───

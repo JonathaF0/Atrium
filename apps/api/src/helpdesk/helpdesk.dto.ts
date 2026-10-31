@@ -268,3 +268,7 @@ export class UpdateAutomationRuleDto {
   @IsOptional() @IsBoolean() enabled?: boolean;
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(10_000) order?: number;
 }
+
+export class CompanyAdminDto {
+  @IsBoolean() companyAdmin!: boolean;
+}

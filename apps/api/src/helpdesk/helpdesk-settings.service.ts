@@ -382,6 +382,26 @@ export class HelpdeskSettingsService {
     return { ok: true };
   }
 
+  // ─── Company admins ───
+
+  /** A company admin sees every ticket of their company in the portal. Needs a contact with a company. */
+  async setCompanyAdmin(orgId: string, contactId: string, actorId: string, companyAdmin: boolean, req?: AuditRequestContext) {
+    const contact = await this.prisma.contact.findFirst({ where: { id: contactId, organizationId: orgId }, select: { id: true, name: true, companyId: true } });
+    if (!contact) throw new NotFoundException("Contact not found");
+    if (companyAdmin && !contact.companyId) throw new BadRequestException("The contact needs a company first");
+    await this.prisma.contact.update({ where: { id: contact.id }, data: { companyAdmin } });
+    await this.audit.record({
+      organizationId: orgId,
+      actorId,
+      action: companyAdmin ? "contact.company_admin_granted" : "contact.company_admin_revoked",
+      targetType: "contact",
+      targetId: contact.id,
+      summary: `${contact.name} ${companyAdmin ? "is now" : "is no longer"} a company admin`,
+      ...auditContext(req),
+    });
+    return { id: contact.id, companyAdmin };
+  }
+
   // ─── Staff list (assignee pickers) ───
 
   async staff(orgId: string) {
