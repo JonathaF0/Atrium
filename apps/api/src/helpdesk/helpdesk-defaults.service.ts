@@ -20,6 +20,7 @@ export const DEFAULT_SLA_NAME = "Standard";
 export class HelpdeskDefaultsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(HelpdeskDefaultsService.name);
   private readonly ensured = new Set<string>();
+  private readonly inFlight = new Map<string, Promise<void>>();
 
   constructor(private prisma: PrismaService) {}
 
@@ -41,8 +42,22 @@ export class HelpdeskDefaultsService implements OnApplicationBootstrap {
     }
   }
 
+  /** Concurrent callers in this process share one run; a race with another instance is retried once. */
   async ensure(organizationId: string): Promise<void> {
     if (this.ensured.has(organizationId)) return;
+    const running = this.inFlight.get(organizationId);
+    if (running) return running;
+    const run = this.create(organizationId)
+      .catch((err: unknown) => {
+        if ((err as { code?: string }).code === "P2002") return this.create(organizationId);
+        throw err;
+      })
+      .finally(() => this.inFlight.delete(organizationId));
+    this.inFlight.set(organizationId, run);
+    return run;
+  }
+
+  private async create(organizationId: string): Promise<void> {
     const settings = await this.prisma.serviceSettings.upsert({
       where: { organizationId },
       create: { organizationId },
