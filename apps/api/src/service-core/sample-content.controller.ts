@@ -1,6 +1,6 @@
 import { Controller, Post, Req, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
-import { seedSampleContent } from "@atrium/database";
+import { seedSampleContent } from "./sample-content";
 import { AuthGuard, CurrentOrg, CurrentUser, Roles, RolesGuard } from "../common";
 import type { AuthenticatedRequest } from "../common";
 import { PrismaService } from "../prisma/prisma.service";

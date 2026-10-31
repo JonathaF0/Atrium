@@ -1,4 +1,4 @@
-import type { PrismaClient } from "@prisma/client";
+import type { PrismaClient } from "@atrium/database";
 import {
   DEFAULT_BUSINESS_SCHEDULE,
   DEFAULT_SLA_TARGETS,

@@ -10,7 +10,6 @@
     "db:migrate": "bunx prisma migrate dev",
     "db:migrate:deploy": "bunx prisma migrate deploy",
     "db:seed": "bun run src/seed.ts",
-    "db:seed:samples": "bun run scripts/seed-samples.ts",
     "db:rls": "bun run scripts/apply-rls.ts",
     "test": "bun test rls",
     "build": "tsc",

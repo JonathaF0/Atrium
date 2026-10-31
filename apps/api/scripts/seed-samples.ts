@@ -8,8 +8,8 @@
  *
  * Idempotent: content that already exists (by name, title or slug) is skipped.
  */
-import { PrismaClient } from "@prisma/client";
-import { seedSampleContent } from "../src/sample-content";
+import { PrismaClient } from "@atrium/database";
+import { seedSampleContent } from "../src/service-core/sample-content";
 
 const prisma = new PrismaClient();
 

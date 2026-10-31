@@ -77,7 +77,7 @@ async function run() {
   // Settings or with `bun run db:seed:samples -- --org <slug>`.
   if (!process.argv.includes("--no-samples")) {
     console.log("\nLoading sample content into existing workspaces...");
-    await $`bun run packages/database/scripts/seed-samples.ts --all`.cwd(root);
+    await $`bun run apps/api/scripts/seed-samples.ts --all`.cwd(root);
   }
 
   console.log("\n--- Ready! Run: bun run dev ---");
