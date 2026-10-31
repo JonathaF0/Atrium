@@ -4,6 +4,7 @@ import { SettingsModule } from "../settings/settings.module";
 import { AuditService } from "./audit.service";
 import { AttachmentStorageService } from "./attachment-storage.service";
 import { ClientScopeService } from "./client-scope.service";
+import { SampleContentController } from "./sample-content.controller";
 import { ServiceSettingsService } from "./service-settings.service";
 import { UploadScanner } from "./upload-scanner";
 
@@ -11,6 +12,7 @@ import { UploadScanner } from "./upload-scanner";
 @Global()
 @Module({
   imports: [FilesModule, SettingsModule],
+  controllers: [SampleContentController],
   providers: [AuditService, AttachmentStorageService, ClientScopeService, ServiceSettingsService, UploadScanner],
   exports: [AuditService, AttachmentStorageService, ClientScopeService, ServiceSettingsService, UploadScanner],
 })
