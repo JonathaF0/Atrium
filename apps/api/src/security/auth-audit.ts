@@ -56,6 +56,31 @@ export async function recordAuthEvent(db: Db, event: AuthAuditEvent): Promise<vo
   }
 }
 
+/** A workspace-scoped entry from code that has no AuditService (Better Auth hooks). Never throws. */
+export async function recordOrgEvent(
+  db: Pick<PrismaService, "auditLog">,
+  entry: {
+    organizationId: string;
+    actorId: string | null;
+    actorEmail: string | null;
+    action: string;
+    targetType: string;
+    targetId: string | null;
+    summary: string;
+    metadata?: Prisma.InputJsonValue;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<void> {
+  try {
+    await db.auditLog.create({
+      data: { ...entry, summary: entry.summary.slice(0, 500), userAgent: entry.userAgent?.slice(0, 500) ?? null },
+    });
+  } catch (err) {
+    logger.error(`Failed to record ${entry.action}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /** Client address and agent of a Better Auth request, for audit entries. */
 export function requestContext(request: Request | undefined): { ipAddress: string | null; userAgent: string | null } {
   if (!request) return { ipAddress: null, userAgent: null };

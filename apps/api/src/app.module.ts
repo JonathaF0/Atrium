@@ -50,6 +50,7 @@ import { CatalogModule } from "./catalog/catalog.module";
 import { EstimatesModule } from "./estimates/estimates.module";
 import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
 import { SecurityModule } from "./security/security.module";
+import { AuditLogModule } from "./audit-log/audit-log.module";
 import { HealthController } from "./health.controller";
 import { SessionMiddleware } from "./auth/session.middleware";
 import { PreviewModeMiddleware } from "./auth/preview-mode.middleware";
@@ -129,6 +130,7 @@ import { PlanGuard } from "./common/guards/plan.guard";
     EstimatesModule,
     RecurringInvoicesModule,
     SecurityModule,
+    AuditLogModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -36,6 +36,7 @@ import {
   toCsv,
 } from "../common";
 import type { CsvColumn } from "../common";
+import { Audited } from "../audit-log/audited.decorator";
 
 @Controller("tasks")
 @UseGuards(AuthGuard, RolesGuard)
@@ -103,6 +104,7 @@ export class TasksController {
 
   @Get("project/:projectId/export")
   @Roles("owner", "admin")
+  @Audited({ action: "export.tasks", targetType: "project", targetId: (req) => String(req.params.projectId), summary: "Exported a project's tasks as CSV" })
   async exportCsv(
     @Param("projectId") projectId: string,
     @CurrentOrg("id") orgId: string,

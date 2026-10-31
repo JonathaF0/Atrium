@@ -3,7 +3,7 @@ import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from "b
 import { deleteSessionCookie } from "better-auth/cookies";
 import { generateRandomString, symmetricDecrypt } from "better-auth/crypto";
 import type { PrismaService } from "../prisma/prisma.service";
-import { recordAuthEvent, requestContext } from "./auth-audit";
+import { recordAuthEvent, recordOrgEvent, requestContext } from "./auth-audit";
 import { verifyTotp } from "./totp";
 
 /** Cookie and lifetime Better Auth's twoFactor plugin uses for a pending second step. */
@@ -230,6 +230,32 @@ export function authSecurityPlugin(deps: AuthSecurityDeps): BetterAuthPlugin {
           }),
         },
         {
+          // Permission changes made through Better Auth's organization routes.
+          matcher: (ctx) => ORG_MEMBER_ACTIONS[ctx.path ?? ""] !== undefined,
+          handler: createAuthMiddleware(async (raw) => {
+            const ctx = as(raw);
+            if (!succeeded(ctx)) return;
+            const session = ctx.context.session as (SessionData & { session: { activeOrganizationId?: string | null } }) | null | undefined;
+            const returned = (ctx.context.returned ?? {}) as Record<string, unknown>;
+            const record = (returned.member ?? returned) as { id?: string; email?: string; role?: string; organizationId?: string; userId?: string };
+            const organizationId =
+              record.organizationId ?? (typeof ctx.body?.organizationId === "string" ? ctx.body.organizationId : null) ?? session?.session.activeOrganizationId;
+            if (!organizationId) return;
+            const action = ORG_MEMBER_ACTIONS[ctx.path];
+            await recordOrgEvent(prisma, {
+              organizationId,
+              actorId: session?.user.id ?? null,
+              actorEmail: session?.user.email ?? null,
+              action,
+              targetType: action.startsWith("member.invit") ? "invitation" : "member",
+              targetId: record.id ?? (typeof ctx.body?.memberId === "string" ? ctx.body.memberId : null),
+              summary: orgEventSummary(action, record),
+              metadata: { role: record.role ?? (ctx.body?.role as string | undefined) ?? null, email: record.email ?? null },
+              ...requestContext(ctx.request),
+            });
+          }),
+        },
+        {
           matcher: (ctx) => ctx.path === "/change-password",
           handler: createAuthMiddleware(async (raw) => {
             const ctx = as(raw);
@@ -267,6 +293,26 @@ export function authSecurityPlugin(deps: AuthSecurityDeps): BetterAuthPlugin {
       ],
     },
   } as BetterAuthPlugin;
+}
+
+const ORG_MEMBER_ACTIONS: Record<string, string> = {
+  "/organization/invite-member": "member.invited",
+  "/organization/cancel-invitation": "member.invitation_cancelled",
+  "/organization/update-member-role": "member.role_changed",
+  "/organization/remove-member": "member.removed",
+};
+
+function orgEventSummary(action: string, record: { email?: string; role?: string }): string {
+  switch (action) {
+    case "member.invited":
+      return `Invited ${record.email ?? "someone"} as ${record.role ?? "member"}`;
+    case "member.invitation_cancelled":
+      return `Cancelled the invitation for ${record.email ?? "someone"}`;
+    case "member.role_changed":
+      return `Changed a member's role to ${record.role ?? "unknown"}`;
+    default:
+      return "Removed a member from the workspace";
+  }
 }
 
 /** The provider id from an `/sso/callback/:providerId` request URL. */

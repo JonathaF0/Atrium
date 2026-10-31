@@ -34,6 +34,7 @@ import {
   CurrentOrg,
   contentDisposition,
 } from "../common";
+import { Audited } from "../audit-log/audited.decorator";
 
 const MAX_CSV_BYTES = 2 * 1024 * 1024;
 
@@ -59,6 +60,7 @@ export class ContactsController {
   // Static routes (e.g. export, import) must be declared before ":id".
 
   @Get("export")
+  @Audited({ action: "export.contacts", targetType: "export", targetId: () => null, summary: "Exported contacts as CSV" })
   async exportCsv(
     @CurrentOrg("id") orgId: string,
     @Query() query: ListContactsQueryDto,

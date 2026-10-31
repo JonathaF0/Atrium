@@ -4,6 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
+  Optional,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHmac, timingSafeEqual } from "crypto";
@@ -19,6 +20,7 @@ import { CLIENT_HIDDEN_STATUSES } from "../invoices/invoices.service";
 import { canSeeScheduleInvoice } from "../recurring-invoices/recurring-visibility";
 import { publicApiUrl } from "../common/helpers/public-api-url";
 import { getCurrency } from "../common/helpers/currency";
+import { AuditService } from "../service-core/audit.service";
 
 interface StripeConfig {
   stripe: Stripe;
@@ -62,6 +64,7 @@ export class PaymentsService {
     private config: ConfigService,
     private notifications: NotificationsService,
     private contactSync: ContactSyncService,
+    @Optional() private audit?: AuditService,
   ) {
     this.webUrl = this.config.get("WEB_URL", "http://localhost:3000");
     this.apiUrl = publicApiUrl(this.config);
@@ -393,6 +396,13 @@ export class PaymentsService {
       });
 
       this.logger.log(`Connected Stripe account ${accountId} for org ${orgId}`);
+      await this.audit?.record({
+        organizationId: orgId,
+        action: "payments.stripe_connected",
+        targetType: "workspace",
+        summary: "Connected a Stripe account",
+        metadata: { livemode: response.livemode ?? false },
+      });
       return { returnUrl };
     } catch (err) {
       if (err instanceof BadRequestException || err instanceof ForbiddenException) throw err;
@@ -612,6 +622,12 @@ export class PaymentsService {
       `Stripe account ${connectedAccountId} deauthorized — disabled payments for org ${settings.organizationId}`,
     );
     this.notifications.notifyStripeDisconnected(settings.organizationId);
+    await this.audit?.record({
+      organizationId: settings.organizationId,
+      action: "payments.stripe_disconnected",
+      targetType: "workspace",
+      summary: "The Stripe account was disconnected from Stripe's side",
+    });
   }
 
   private async handleCheckoutExpired(session: Record<string, unknown>) {
@@ -698,6 +714,18 @@ export class PaymentsService {
     });
 
     if (result.count === 0) return false; // Already processed
+
+    const paid = await this.prisma.invoice.findUnique({ where: { id: invoice.id }, select: { organizationId: true } });
+    if (paid) {
+      await this.audit?.record({
+        organizationId: paid.organizationId,
+        action: "invoice.paid",
+        targetType: "invoice",
+        targetId: invoice.id,
+        summary: `Invoice ${invoice.invoiceNumber} paid online`,
+        metadata: { amountCents: amountCents, paymentIntentId },
+      });
+    }
 
     this.logger.log(`Invoice ${invoice.invoiceNumber} marked as paid via Stripe`);
     this.notifications.notifyInvoicePaid(invoice.id);
