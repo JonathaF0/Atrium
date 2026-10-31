@@ -117,7 +117,10 @@ test.describe.serial("Estimates", () => {
     await expect(client.getByText(/margin/i)).toHaveCount(0);
     await expect(client.getByText("800.00")).toHaveCount(0);
 
-    await client.getByLabel(`Include Priority support ${suffix}`).uncheck();
+    // The box follows the server's answer, so click and wait rather than uncheck().
+    const option = client.getByLabel(`Include Priority support ${suffix}`);
+    await option.click();
+    await expect(option).not.toBeChecked();
     await expect(client.getByTestId("estimate-total")).toContainText("1,716.00");
 
     await client.getByRole("button", { name: "Request changes" }).click();

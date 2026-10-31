@@ -49,7 +49,7 @@ test.describe("Helpdesk", () => {
     await client.getByLabel("Description").fill("The **printer** shows an error.");
     await client.getByLabel("Attachments").setInputFiles({ name: "error-log.txt", mimeType: "text/plain", buffer: Buffer.from("paper jam at tray 2") });
     await client.getByRole("button", { name: "Submit request" }).click();
-    await client.waitForURL(/\/portal\/tickets\/[^/]+$/, { timeout: 15000 });
+    await client.waitForURL(/\/portal\/tickets\/(?!new$)[^/]+$/, { timeout: 15000 });
     const ticketId = client.url().split("/").pop() as string;
     await expect(client.getByRole("heading", { name: "Printer offline on floor two" })).toBeVisible();
     await expect(client.getByRole("button", { name: /error-log\.txt/ })).toBeVisible();

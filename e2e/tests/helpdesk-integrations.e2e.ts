@@ -59,7 +59,7 @@ test.describe("Helpdesk integrations", () => {
     await page.getByLabel("Affected device or service (optional)").selectOption({ label: `Laptop ${stamp}` });
     await page.getByLabel("Description").fill("Drops every hour.");
     await page.getByRole("button", { name: "Submit request" }).click();
-    await page.waitForURL(/\/portal\/tickets\/[^/]+$/, { timeout: 15000 });
+    await page.waitForURL(/\/portal\/tickets\/(?!new$)[^/]+$/, { timeout: 15000 });
     const ticketId = page.url().split("/").pop() as string;
 
     const linked: { name: string }[] = await (await ws.owner.request.get(`${API}/assets/for-ticket/${ticketId}`)).json();
