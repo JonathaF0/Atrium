@@ -22,6 +22,7 @@ export interface ContactDetail {
   description: string | null;
   status: string;
   company: { id: string; name: string } | null;
+  companyAdmin: boolean;
   leadSource: { id: string; name: string } | null;
   referredBy: { id: string; name: string } | null;
   labels: { id: string; name: string; color: string }[];

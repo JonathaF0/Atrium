@@ -122,6 +122,15 @@ export class ContactsController {
   }
 
   @Put(":id")
+  @Audited({
+    // Only the company-admin flag widens what a client can see, so only it is audited.
+    action: (req) => {
+      const flag: unknown = (req.body as { companyAdmin?: unknown } | undefined)?.companyAdmin;
+      if (flag === undefined) return null;
+      return flag ? "contact.company_admin_granted" : "contact.company_admin_revoked";
+    },
+    targetType: "contact",
+  })
   update(
     @Param("id") id: string,
     @Body() dto: UpdateContactDto,
