@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   ValidateIf,
   ValidateNested,
   IsDateString,
@@ -162,6 +163,11 @@ export class UpdateContactDto {
   @ValidateIf((_, v) => v !== null)
   @IsString()
   referredById?: string | null;
+
+  /** Sees every ticket, estimate and contract of their company in the portal (applied on update). */
+  @IsOptional()
+  @IsBoolean()
+  companyAdmin?: boolean;
 }
 
 export class CreateContactDto extends UpdateContactDto {}
