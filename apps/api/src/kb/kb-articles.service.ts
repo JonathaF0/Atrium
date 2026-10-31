@@ -47,6 +47,13 @@ const AUDITED_TRANSITIONS: Partial<Record<KbWorkflowAction, { action: string; ve
 
 type Tx = Prisma.TransactionClient;
 
+/** True when the slug was derived from the title (optionally with a -N suffix) and readers have never seen it. */
+export function keepsAutoSlug(article: { slug: string; title: string; status: string; publishedAt: Date | null }): boolean {
+  if (article.status !== "draft" || article.publishedAt) return false;
+  const base: string = slugify(article.title);
+  return article.slug === base || new RegExp(`^${base.slice(0, 74)}-\\d+$`).test(article.slug);
+}
+
 @Injectable()
 export class KbArticlesService {
   constructor(
@@ -187,6 +194,9 @@ export class KbArticlesService {
     }
     if (dto.slug !== undefined && dto.slug !== existing.slug) {
       data.slug = await this.slugFor(organizationId, dto.slug, existing.title, id);
+    } else if (dto.slug === undefined && title !== undefined && title !== existing.title && keepsAutoSlug(existing)) {
+      // A never-published draft whose slug still follows its title gets a slug for the new title.
+      data.slug = await this.slugFor(organizationId, undefined, title, id);
     }
     if (dto.collectionId !== undefined) data.collectionId = dto.collectionId;
     if (dto.visibility !== undefined) data.visibility = dto.visibility;

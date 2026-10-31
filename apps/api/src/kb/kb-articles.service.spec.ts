@@ -186,6 +186,29 @@ describe("KbArticlesService.create", () => {
   });
 });
 
+describe("KbArticlesService slug follows title", () => {
+  it("renaming a never-published draft re-derives its slug", async () => {
+    const { prisma, service } = build();
+    prisma.kbArticle.findFirst
+      .mockResolvedValueOnce({ ...published, status: "draft", publishedAt: null, title: "Untitled article", slug: "untitled-article" })
+      .mockResolvedValueOnce(null);
+    await service.update("org", "a1", { title: "Connect to Wi-Fi" }, actor);
+    const update = prisma.kbArticle.update.mock.calls.at(-1)![0] as { data: Row };
+    expect(update.data.slug).toBe("connect-to-wi-fi");
+  });
+
+  it("keeps the slug once published or edited by hand", async () => {
+    const { prisma, service } = build();
+    prisma.kbArticle.findFirst.mockResolvedValueOnce({ ...published, publishedAt: new Date() });
+    await service.update("org", "a1", { title: "New title" }, actor);
+    prisma.kbArticle.findFirst.mockResolvedValueOnce({ ...published, status: "draft", publishedAt: null, slug: "custom" });
+    await service.update("org", "a1", { title: "Other title" }, actor);
+    for (const call of prisma.kbArticle.update.mock.calls) {
+      expect((call[0] as { data: Row }).data.slug).toBeUndefined();
+    }
+  });
+});
+
 describe("KbArticlesService.fromTicket", () => {
   it("drafts from public messages only and links the ticket", async () => {
     const { prisma, service } = build();
