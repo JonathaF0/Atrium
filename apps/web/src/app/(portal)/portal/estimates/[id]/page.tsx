@@ -25,6 +25,25 @@ interface PortalEstimate extends EstimateDocData {
 
 type Panel = "accept" | "changes" | "decline" | null;
 
+/** Scales the pad's PNG down to at most 600px wide so the upload stays small. */
+async function shrinkSignature(dataUrl: string): Promise<string> {
+  const img = new Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("Could not read the signature"));
+    img.src = dataUrl;
+  });
+  const scale = Math.min(1, 600 / img.width);
+  if (scale >= 1) return dataUrl;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
 const inputClass =
   "w-full px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm outline-none focus:ring-1 focus:ring-[var(--primary)]";
 
@@ -187,7 +206,11 @@ export default function PortalEstimatePage() {
               <button
                 disabled={!canAccept}
                 onClick={async () => {
-                  const ok = await post("accept", { fullName: fullName.trim(), signature, agree }, "Estimate accepted");
+                  const ok = await post(
+                    "accept",
+                    { fullName: fullName.trim(), signature: await shrinkSignature(signature!), agree },
+                    "Estimate accepted",
+                  );
                   if (ok) setPanel(null);
                 }}
                 className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg text-sm font-medium disabled:opacity-50"
