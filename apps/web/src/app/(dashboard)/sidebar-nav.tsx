@@ -9,6 +9,8 @@ import {
   Calendar,
   BarChart3,
   Contact,
+  HardDrive,
+  FileSignature,
 } from "lucide-react";
 
 const navItems = [
@@ -16,6 +18,8 @@ const navItems = [
   { href: "/dashboard/projects", label: "Projects", icon: FolderKanban },
   { href: "/dashboard/calendar", label: "Calendar", icon: Calendar },
   { href: "/dashboard/contacts", label: "Contacts", icon: Contact },
+  { href: "/dashboard/contracts", label: "Contracts", icon: FileSignature },
+  { href: "/dashboard/assets", label: "Assets", icon: HardDrive },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];

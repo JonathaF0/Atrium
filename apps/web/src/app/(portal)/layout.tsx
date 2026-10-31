@@ -3,6 +3,7 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { loginRedirectPath } from "@/lib/login-redirect";
 import Link from "next/link";
 import { SignOutButton } from "./sign-out-button";
+import { PortalServiceLinks } from "./portal-service-links";
 import { getSession } from "@/lib/auth";
 import { NotificationBell, NotificationProvider } from "@/components/notification-bell";
 import { DynamicFavicon } from "@/components/dynamic-favicon";
@@ -89,6 +90,7 @@ export default async function PortalLayout({
             >
               Projects
             </Link>
+            <PortalServiceLinks />
             <Link
               href="/portal/settings"
               className="text-sm text-[var(--muted-foreground)] hover:text-[var(--foreground)]"

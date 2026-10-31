@@ -12,6 +12,8 @@ import { RevenueStrip } from "../../[id]/revenue-strip";
 import type { Revenue } from "../../[id]/types";
 import { STATUS_LABELS, inputClass } from "../../shared";
 import { useRowLink } from "@/lib/use-row-link";
+import { CompanyAssets } from "../../../assets/company-assets";
+import { CompanyContracts } from "../../../contracts/company-contracts";
 
 interface CompanyDetail {
   id: string;
@@ -349,6 +351,11 @@ export default function CompanyPage() {
             className={inputClass}
           />
         </aside>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <CompanyContracts company={{ id: company.id, name: company.name }} />
+        <CompanyAssets company={{ id: company.id, name: company.name }} />
       </div>
 
       {adding && (

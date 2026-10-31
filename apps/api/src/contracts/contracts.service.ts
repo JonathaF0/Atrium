@@ -302,6 +302,15 @@ export class ContractsService {
     return Promise.all(contracts.map(async (c) => ({ ...c, usage: await this.usageOf(c, now) })));
   }
 
+  slaPolicies(orgId: string): Promise<Array<{ id: string; name: string }>> {
+    return this.prisma.slaPolicy.findMany({
+      where: { organizationId: orgId },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 200,
+    });
+  }
+
   /** The company's contract in force at `at`, most specific first (see compareSpecificity). */
   async activeContractFor(orgId: string, companyId: string, at: Date = new Date()): Promise<Contract | null> {
     const contracts = await this.prisma.contract.findMany({

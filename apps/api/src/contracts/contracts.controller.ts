@@ -29,6 +29,13 @@ export class ContractsController {
     return this.contracts.coveredHours(orgId);
   }
 
+  /** SLA policies a contract can point at (id and name only). */
+  @Get("sla-policies")
+  @Roles("owner", "admin")
+  slaPolicies(@CurrentOrg("id") orgId: string) {
+    return this.contracts.slaPolicies(orgId);
+  }
+
   @Get("coverage/:companyId")
   @Roles("owner", "admin")
   coverage(@Param("companyId") companyId: string, @CurrentOrg("id") orgId: string) {
