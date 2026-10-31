@@ -114,7 +114,7 @@ test.describe("Reports", () => {
   test("company filter narrows the report", async () => {
     await owner.goto(`${WEB_URL}/dashboard/reports/hours`);
     await expect(owner.getByRole("row").filter({ hasText: companyName })).toBeVisible({ timeout: 15000 });
-    await owner.getByLabel("Company").selectOption({ label: companyName });
+    await owner.getByLabel("Company", { exact: true }).selectOption({ label: companyName });
     await expect(owner.getByRole("row").filter({ hasText: "No company" })).toHaveCount(0);
     await expect(owner.getByRole("row").filter({ hasText: companyName })).toBeVisible();
   });

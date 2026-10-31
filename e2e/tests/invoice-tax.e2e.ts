@@ -66,7 +66,7 @@ test.describe.serial("Invoice tax", () => {
     expect(((await stats.json()) as { outstandingAmount: number }).outstandingAmount).toBe(11000);
 
     await client.goto(`${WEB}/portal/projects/${projectId}?tab=invoices`);
-    await client.getByText(invoice.invoiceNumber, { exact: true }).click({ timeout: 15000 });
+    await client.getByRole("button", { name: new RegExp(`^${invoice.invoiceNumber} `) }).click({ timeout: 15000 });
     await expect(client.getByRole("cell", { name: "Tax", exact: true })).toBeVisible();
     await expect(client.getByRole("cell", { name: "$110.00" }).first()).toBeVisible();
   });

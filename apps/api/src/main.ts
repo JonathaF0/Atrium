@@ -142,7 +142,8 @@ async function bootstrap() {
       callback(null, { origin: "*", credentials: false });
       return;
     }
-    callback(null, { origin: webOrigin, credentials: true });
+    // Exposed so CSV and PDF downloads keep their names when the web app and API are on different origins.
+    callback(null, { origin: webOrigin, credentials: true, exposedHeaders: ["Content-Disposition"] });
   };
   app.enableCors(corsDelegate);
 

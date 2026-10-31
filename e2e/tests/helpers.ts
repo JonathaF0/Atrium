@@ -62,9 +62,21 @@ export function getCsrfToken(): string {
 export async function getCsrfTokenFromContext(
   context: BrowserContext,
 ): Promise<string> {
-  const cookies = await context.cookies();
-  const cookie = cookies.find((c) => c.name === "csrf-token");
-  return cookie?.value || "";
+  const read = async (): Promise<string> =>
+    (await context.cookies()).find((c) => c.name === "csrf-token")?.value || "";
+  // The cookie is set by the first API GET. A context that only rendered pages
+  // server-side hasn't made one yet, so make one.
+  if (!(await read())) await context.request.get("http://localhost:3001/api/setup/status");
+  // Right after sign-in the page's own first API calls can still be in flight;
+  // each that went out without the cookie gets a fresh token, so wait until it settles.
+  let token: string = await read();
+  for (let i = 0; i < 10; i++) {
+    await new Promise((r) => setTimeout(r, 200));
+    const next: string = await read();
+    if (next === token) break;
+    token = next;
+  }
+  return token;
 }
 
 /**

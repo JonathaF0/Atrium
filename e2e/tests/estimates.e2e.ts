@@ -96,7 +96,7 @@ test.describe.serial("Estimates", () => {
     await expect(owner.getByTestId("builder-margin")).toBeVisible();
 
     await owner.getByRole("button", { name: "Create draft" }).click();
-    await owner.waitForURL(/\/dashboard\/estimates\/[a-z0-9]+$/, { timeout: 15000 });
+    await owner.waitForURL(/\/dashboard\/estimates\/(?!new$)[a-z0-9]+$/, { timeout: 15000 });
     estimateId = owner.url().split("/").pop()!;
     await expect(owner.getByRole("heading", { level: 1 })).toContainText(/EST-\d+/);
     estimateNumber = (await owner.getByRole("heading", { level: 1 }).innerText()).match(/EST-\d+/)![0];
