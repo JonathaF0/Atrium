@@ -11,6 +11,7 @@ import {
   Contact,
   HardDrive,
   FileSignature,
+  Megaphone,
 } from "lucide-react";
 
 const navItems = [
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/dashboard/contacts", label: "Contacts", icon: Contact },
   { href: "/dashboard/contracts", label: "Contracts", icon: FileSignature },
   { href: "/dashboard/assets", label: "Assets", icon: HardDrive },
+  { href: "/dashboard/announcements", label: "Announcements", icon: Megaphone },
   { href: "/dashboard/reports", label: "Reports", icon: BarChart3 },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
