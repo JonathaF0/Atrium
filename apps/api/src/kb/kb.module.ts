@@ -14,6 +14,6 @@ import { KbReviewTask } from "./kb-review.task";
   imports: [MailModule, NotificationsModule],
   controllers: [KbController, KbPortalController, KbPublicController],
   providers: [KbAccessService, KbArticlesService, KbCollectionsService, KbReaderService, KbReviewTask],
-  exports: [KbAccessService, KbReaderService, KbArticlesService],
+  exports: [KbAccessService, KbReaderService, KbArticlesService, KbCollectionsService],
 })
 export class KbModule {}

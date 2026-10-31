@@ -40,6 +40,9 @@ const mockPrisma = {
   company: {
     findMany: mock(() => Promise.resolve([])),
   },
+  kbArticle: {
+    findMany: mock(() => Promise.resolve([])),
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +91,7 @@ function clearAllMocks() {
   mockPrisma.member.findMany.mockClear();
   mockPrisma.contact.findMany.mockClear();
   mockPrisma.company.findMany.mockClear();
+  mockPrisma.kbArticle.findMany.mockClear();
 }
 
 function resetAllMocksToEmpty() {
@@ -117,10 +121,10 @@ describe("SearchService", () => {
   // =========================================================================
 
   describe("return shape", () => {
-    it("returns projects, tasks, files, contacts and companies, and no clients group", async () => {
+    it("returns projects, tasks, files, contacts, companies and KB articles, and no clients group", async () => {
       const result = await service.search(ORG, QUERY);
 
-      expect(Object.keys(result).sort()).toEqual(["companies", "contacts", "files", "projects", "tasks"]);
+      expect(Object.keys(result).sort()).toEqual(["companies", "contacts", "files", "kbArticles", "projects", "tasks"]);
       expect(result).not.toHaveProperty("clients");
     });
 
@@ -157,6 +161,19 @@ describe("SearchService", () => {
       expect(result.contacts).toEqual([
         { id: "c-1", name: "Alice Alpha", email: "alice@example.com", company: "Alpha Corp" },
       ]);
+    });
+  });
+
+  describe("knowledge base search", () => {
+    it("matches article titles in the org, skipping archived ones", async () => {
+      await service.search(ORG, QUERY);
+      const args = (mockPrisma.kbArticle.findMany.mock.calls[0] as unknown as [PrismaArgs])[0];
+      expect(args.where).toEqual({
+        organizationId: ORG,
+        status: { not: "archived" },
+        title: { contains: QUERY, mode: "insensitive" },
+      });
+      expect(args.take).toBe(5);
     });
   });
 

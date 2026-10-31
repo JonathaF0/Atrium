@@ -123,6 +123,13 @@ export class KbArticlesService {
     };
   }
 
+  /** Staff lookup by slug (any status); used by MCP clients that only know the slug. */
+  async getBySlug(organizationId: string, slug: string) {
+    const row = await this.prisma.kbArticle.findFirst({ where: { organizationId, slug }, select: { id: true } });
+    if (!row) throw new NotFoundException("Article not found");
+    return this.get(organizationId, row.id);
+  }
+
   /** Owners and admins who can own an article. */
   async staff(organizationId: string) {
     const members = await this.prisma.member.findMany({

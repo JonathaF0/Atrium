@@ -24,6 +24,10 @@ import { updateTools } from "./tools/updates.tools";
 import { noteTools } from "./tools/notes.tools";
 import { contactTools } from "./tools/contacts.tools";
 import { documentTools } from "./tools/documents.tools";
+import { kbTools } from "./tools/kb.tools";
+import { KbReaderService } from "../kb/kb-reader.service";
+import { KbArticlesService } from "../kb/kb-articles.service";
+import { KbCollectionsService } from "../kb/kb-collections.service";
 import { publicApiUrl } from "../common/helpers/public-api-url";
 
 const RATE_LIMIT = 300;
@@ -44,6 +48,9 @@ export class McpService {
     private billing: BillingService,
     private documents: DocumentsService,
     private config: ConfigService,
+    private kbReader: KbReaderService,
+    private kbArticles: KbArticlesService,
+    private kbCollections: KbCollectionsService,
   ) {}
 
   /** RFC 9728 challenge pointing MCP clients at this API's OAuth metadata. */
@@ -63,6 +70,7 @@ export class McpService {
       ...noteTools({ notes: this.notes }),
       ...contactTools({ contacts: this.contacts }),
       ...documentTools({ documents: this.documents }),
+      ...kbTools({ reader: this.kbReader, articles: this.kbArticles, collections: this.kbCollections }),
     ];
   }
 
