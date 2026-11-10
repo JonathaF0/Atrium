@@ -71,7 +71,9 @@ export function PortalDeliverableReview({ doc, onClose, onDecided }: PortalDeliv
           signal: controller.signal,
         });
         if (!res.ok) throw new Error(`Failed to load document (${res.status})`);
-        const url: string = URL.createObjectURL(await res.blob());
+        // Type the blob from the file record: a server answering octet-stream would leave the frame blank.
+        const blob: Blob = new Blob([await res.arrayBuffer()], { type: doc.file.mimeType });
+        const url: string = URL.createObjectURL(blob);
         if (revoked) URL.revokeObjectURL(url);
         else setBlobUrl(url);
       } catch (err) {
@@ -91,7 +93,7 @@ export function PortalDeliverableReview({ doc, onClose, onDecided }: PortalDeliv
         return null;
       });
     };
-  }, [doc.id, doc.currentVersion, canPreview]);
+  }, [doc.id, doc.currentVersion, doc.file.mimeType, canPreview]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
