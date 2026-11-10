@@ -25,4 +25,5 @@ export { InvoiceReminderEmail } from "./templates/invoice-reminder";
 export { TicketCreatedEmail } from "./templates/ticket-created";
 export { TicketReplyEmail } from "./templates/ticket-reply";
 export { TicketStatusEmail } from "./templates/ticket-status";
+export { TicketActivityEmail } from "./templates/ticket-activity";
 export { TicketAcknowledgementEmail } from "./templates/ticket-acknowledgement";

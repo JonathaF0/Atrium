@@ -40,6 +40,7 @@ const TEMPLATES: string[] = [
   "TicketCreatedEmail",
   "TicketReplyEmail",
   "TicketStatusEmail",
+  "TicketActivityEmail",
   "TicketAcknowledgementEmail",
 ];
 

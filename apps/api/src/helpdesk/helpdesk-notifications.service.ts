@@ -4,6 +4,7 @@ import { InjectPinoLogger, PinoLogger } from "nestjs-pino";
 import { randomBytes } from "crypto";
 import {
   TicketAcknowledgementEmail,
+  TicketActivityEmail,
   TicketCreatedEmail,
   TicketReplyEmail,
   TicketStatusEmail,
@@ -41,6 +42,14 @@ const TICKET_SELECT = {
   projectId: true,
   slaPolicyId: true,
 } as const;
+
+interface StaffRecipient {
+  userId: string;
+  name: string;
+  email: string;
+  /** The member's "Helpdesk emails" switch. */
+  emails: boolean;
+}
 
 type TicketRow = {
   id: string;
@@ -104,7 +113,7 @@ export class HelpdeskNotificationsService {
       const link = `/dashboard/tickets/${ticket.id}`;
       this.inAppAndPush(recipients.map((r) => r.userId), ticket.organizationId, "ticket_created", `New ticket ${ref}`, `${requester}: ${ticket.subject}`, link);
       await Promise.allSettled(
-        recipients.map(async (r) => {
+        recipients.filter((r) => r.emails).map(async (r) => {
           const html: string = await this.renderer.render(
             TicketCreatedEmail({
               recipientName: r.name,
@@ -162,8 +171,52 @@ export class HelpdeskNotificationsService {
       if (!ctx) return;
       const { ticket, ref } = ctx;
       this.dispatch("ticket.replied", ticket, `${authorName} replied to ${ref}`, authorName, excerpt(body, 300));
-      const recipients = await this.staffRecipients(ticket.organizationId, ticket.assigneeId ? [ticket.assigneeId] : null);
+      const recipients = await this.assigneeOrStaff(ticket);
       this.inAppAndPush(recipients.map((r) => r.userId), ticket.organizationId, "ticket_client_reply", `${authorName} replied to ${ref}`, excerpt(body, 120), `/dashboard/tickets/${ticket.id}`);
+      await this.emailStaff(recipients, ticket, ref, `${authorName} replied: ${ticket.subject}`, `${authorName} replied to ${ref}`, `${authorName} replied to "${ticket.subject}".`, excerpt(body, 600));
+    });
+  }
+
+  /** The requester closed their own ticket from the portal. */
+  clientClosed(ticketId: string, actorName: string): void {
+    this.run("client close", ticketId, async () => {
+      const ctx = await this.context(ticketId);
+      if (!ctx) return;
+      const { ticket, ref } = ctx;
+      const recipients = await this.assigneeOrStaff(ticket);
+      const title = `${actorName} closed ${ref}`;
+      this.inAppAndPush(recipients.map((r) => r.userId), ticket.organizationId, "ticket_client_closed", title, ticket.subject, `/dashboard/tickets/${ticket.id}`);
+      await this.emailStaff(recipients, ticket, ref, `Closed by the client: ${ticket.subject}`, title, `${actorName} closed "${ticket.subject}" from the portal. No further action is needed unless you want to follow up.`);
+    });
+  }
+
+  /** The requester reopened a resolved ticket: it needs attention again. */
+  clientReopened(ticketId: string, actorName: string): void {
+    this.run("client reopen", ticketId, async () => {
+      const ctx = await this.context(ticketId);
+      if (!ctx) return;
+      const { ticket, ref } = ctx;
+      const recipients = await this.assigneeOrStaff(ticket);
+      const title = `${actorName} reopened ${ref}`;
+      this.inAppAndPush(recipients.map((r) => r.userId), ticket.organizationId, "ticket_client_reopened", title, ticket.subject, `/dashboard/tickets/${ticket.id}`);
+      await this.emailStaff(recipients, ticket, ref, `Reopened: ${ticket.subject}`, title, `${actorName} reopened "${ticket.subject}". It's back in the open queue.`);
+    });
+  }
+
+  /** A satisfaction rating came in. Staff are emailed only about poor ratings (1 or 2). */
+  rated(ticketId: string, actorName: string, rating: number, comment: string | null): void {
+    this.run("rating", ticketId, async () => {
+      const ctx = await this.context(ticketId);
+      if (!ctx) return;
+      const { ticket, ref } = ctx;
+      const stars = `${rating} star${rating === 1 ? "" : "s"}`;
+      const title = `${actorName} rated ${ref} ${stars}`;
+      this.dispatch("ticket.rated", ticket, title, actorName, comment ?? undefined, { rating });
+      const recipients = await this.assigneeOrStaff(ticket);
+      this.inAppAndPush(recipients.map((r) => r.userId), ticket.organizationId, "ticket_rated", title, comment ? excerpt(comment, 120) : ticket.subject, `/dashboard/tickets/${ticket.id}`);
+      if (rating <= 2) {
+        await this.emailStaff(recipients, ticket, ref, `Low rating (${stars}): ${ticket.subject}`, title, `${actorName} gave "${ticket.subject}" ${stars}.`, comment ?? undefined);
+      }
     });
   }
 
@@ -208,6 +261,8 @@ export class HelpdeskNotificationsService {
       this.dispatch("ticket.assigned", ticket, `${ref} assigned`, undefined, undefined, { assigneeId });
       if (assigneeId === actorId) return;
       this.inAppAndPush([assigneeId], ticket.organizationId, "ticket_assigned", `${ref} assigned to you`, ticket.subject, `/dashboard/tickets/${ticket.id}`);
+      const assignee = (await this.staffRecipients(ticket.organizationId, [assigneeId])).filter((r) => r.userId === assigneeId);
+      await this.emailStaff(assignee, ticket, ref, `Assigned to you: ${ticket.subject}`, `${ref} assigned to you`, `"${ticket.subject}" is now assigned to you.`);
     });
   }
 
@@ -236,6 +291,7 @@ export class HelpdeskNotificationsService {
       if (ticket.assigneeId) ids.add(ticket.assigneeId);
       if (escalateToId) ids.add(escalateToId);
       this.inAppAndPush([...ids], ticket.organizationId, "ticket_sla_breached", `${what} SLA breached on ${ref}`, ticket.subject, `/dashboard/tickets/${ticket.id}`);
+      await this.emailStaff(await this.staffRecipients(ticket.organizationId, [...ids]), ticket, ref, `${what} SLA breached: ${ticket.subject}`, `${what} SLA breached on ${ref}`, `The ${what.toLowerCase()} target for "${ticket.subject}" has passed.`);
     });
   }
 
@@ -321,13 +377,41 @@ export class HelpdeskNotificationsService {
   private async staffRecipients(
     organizationId: string,
     only: string[] | null,
-  ): Promise<{ userId: string; name: string; email: string }[]> {
+  ): Promise<StaffRecipient[]> {
     const members = await this.prisma.member.findMany({
       where: { organizationId, role: { in: ["owner", "admin"] }, ...(only ? { userId: { in: only } } : {}) },
-      select: { userId: true, user: { select: { name: true, email: true } } },
+      select: { userId: true, helpdeskEmails: true, user: { select: { name: true, email: true } } },
     });
     if (only && members.length === 0) return this.staffRecipients(organizationId, null);
-    return members.map((m) => ({ userId: m.userId, name: m.user.name, email: m.user.email }));
+    return members.map((m) => ({ userId: m.userId, name: m.user.name, email: m.user.email, emails: m.helpdeskEmails }));
+  }
+
+  /** Emails staff who haven't turned helpdesk emails off. */
+  private async emailStaff(
+    recipients: StaffRecipient[],
+    ticket: TicketRow,
+    ref: string,
+    subjectLine: string,
+    heading: string,
+    message: string,
+    quote?: string,
+  ): Promise<void> {
+    const ticketUrl = `${this.webUrl}/dashboard/tickets/${ticket.id}`;
+    await Promise.allSettled(
+      recipients
+        .filter((r) => r.emails)
+        .map(async (r) => {
+          const html: string = await this.renderer.render(
+            TicketActivityEmail({ recipientName: r.name, heading, message, excerpt: quote, ticketUrl }),
+          );
+          await this.mail.send(r.email, `[${ref}] ${subjectLine}`, html, ticket.organizationId);
+        }),
+    );
+  }
+
+  /** The assignee, or every owner and admin when nobody is assigned. */
+  private assigneeOrStaff(ticket: TicketRow): Promise<StaffRecipient[]> {
+    return this.staffRecipients(ticket.organizationId, ticket.assigneeId ? [ticket.assigneeId] : null);
   }
 
   private inAppAndPush(userIds: string[], organizationId: string, type: string, title: string, message: string, link: string): void {

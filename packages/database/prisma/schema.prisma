@@ -29,7 +29,8 @@ model User {
   tasksAssigned      Task[]              @relation("TaskAssignee")
   timeEntries        TimeEntry[]
   apiKeys            ApiKey[]
-  oauthApplications  OauthApplication[]
+  oauthClients       OauthClient[]
+  oauthRefreshTokens OauthRefreshToken[]
   oauthAccessTokens  OauthAccessToken[]
   oauthConsents      OauthConsent[]
   mcpGrants          McpGrant[]
@@ -52,8 +53,11 @@ model Session {
   userAgent String?
   userId    String
 
-  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   activeOrganizationId String?
+
+  oauthRefreshTokens OauthRefreshToken[]
+  oauthAccessTokens  OauthAccessToken[]
 
   @@index([userId])
   @@map("session")
@@ -130,19 +134,19 @@ model SsoProvider {
 }
 
 model Organization {
-  id             String   @id
-  name           String
-  slug           String?  @unique
-  logo           String?
-  customDomain   String?  @unique
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  metadata       String?
-  setupCompleted Boolean  @default(false)
+  id                        String    @id
+  name                      String
+  slug                      String?   @unique
+  logo                      String?
+  customDomain              String?   @unique
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+  metadata                  String?
+  setupCompleted            Boolean   @default(false)
   // Set once the contacts boot backfill gave pending client invitations a contact.
-  inviteesBackfilledAt DateTime?
+  inviteesBackfilledAt      DateTime?
   // Version of the contacts boot backfill that last finished without failures; boots re-run it while this is below CONTACTS_BACKFILL_VERSION.
-  contactsBackfillVersion Int @default(0)
+  contactsBackfillVersion   Int       @default(0)
   // Set while an API instance runs the contacts backfill for this workspace, so a second instance booting at the same time skips it. Stale after an hour (a crashed run).
   contactsBackfillClaimedAt DateTime?
 
@@ -191,8 +195,8 @@ model Member {
   role           String
   createdAt      DateTime @default(now())
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   labels       MemberLabel[]
   apiKeys      ApiKey[]
   mcpGrants    McpGrant[]
@@ -205,10 +209,16 @@ model Member {
   weeklyReminderSentAt  DateTime?
   mondayDigest          Boolean   @default(true)
   mondayDigestSentAt    DateTime?
+  // Helpdesk emails to this staff member (client replies, closes, ratings, assignments, SLA breaches).
+  helpdeskEmails        Boolean   @default(true)
 
   // Last authenticated request in this workspace, written at most hourly. Lets
   // owners see which clients are actually using the portal.
   lastSeenAt DateTime?
+
+  // Dashboard cards this person has hidden. Stored as hidden (not shown) so new
+  // cards appear for everyone by default.
+  dashboardHidden String[] @default([])
 
   @@index([organizationId])
   @@index([userId])
@@ -218,16 +228,16 @@ model Member {
 }
 
 model Invitation {
-  id               String    @id
-  organizationId   String
-  email            String
-  role             String?
-  status           String
-  expiresAt        DateTime
-  inviterId        String
-  createdAt        DateTime  @default(now())
+  id             String    @id
+  organizationId String
+  email          String
+  role           String?
+  status         String
+  expiresAt      DateTime
+  inviterId      String
+  createdAt      DateTime  @default(now())
   // Set when the "you're still invited" nudge goes out, so it is sent once.
-  reminderSentAt   DateTime?
+  reminderSentAt DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
@@ -260,66 +270,185 @@ model ApiKey {
   @@map("api_key")
 }
 
-// ─── OAuth provider (Better Auth mcp plugin) ───
-// Field names are dictated by better-auth/dist/plugins/oidc-provider/schema.mjs.
+// ─── OAuth provider (Better Auth @better-auth/mcp plugin) ───
+// Generated with the Better Auth CLI from the oauth-provider schema; table
+// names are Atrium's. Do not rename fields: the plugin reads and writes them.
+// The plugin's string-list fields are Json, not String[]: it tells an unset
+// list (null) from an empty one, and Prisma reads a NULL String[] back as [].
 
-model OauthApplication {
-  id           String   @id
-  name         String
-  icon         String?
-  metadata     String?
-  clientId     String   @unique
-  clientSecret String?
-  redirectUrls String
-  type         String
-  disabled     Boolean? @default(false)
-  userId       String?
-  createdAt    DateTime
-  updatedAt    DateTime
+model OauthClient {
+  id                               String    @id
+  clientId                         String    @unique
+  clientSecret                     String?
+  clientDiscoveryId                String?
+  disabled                         Boolean?  @default(false)
+  skipConsent                      Boolean?
+  enableEndSession                 Boolean?
+  subjectType                      String?
+  scopes                           Json?
+  clientCredentialsScopes          Json?     @default("[]")
+  userId                           String?
+  createdAt                        DateTime?
+  updatedAt                        DateTime?
+  name                             String?
+  uri                              String?
+  icon                             String?
+  contacts                         Json?
+  tos                              String?
+  policy                           String?
+  softwareId                       String?
+  softwareVersion                  String?
+  softwareStatement                String?
+  redirectUris                     Json?
+  postLogoutRedirectUris           Json?
+  backchannelLogoutUri             String?
+  backchannelLogoutSessionRequired Boolean?
+  tokenEndpointAuthMethod          String?
+  applicationType                  String?
+  jwks                             String?
+  jwksUri                          String?
+  grantTypes                       Json?
+  responseTypes                    Json?
+  requirePKCE                      Boolean?
+  dpopBoundAccessTokens            Boolean?  @default(false)
+  referenceId                      String?
+  metadata                         Json?
 
-  user         User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessTokens OauthAccessToken[]
-  consents     OauthConsent[]
+  user          User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resources     OauthClientResource[]
+  refreshTokens OauthRefreshToken[]
+  accessTokens  OauthAccessToken[]
+  consents      OauthConsent[]
 
   @@index([userId])
-  @@map("oauth_application")
+  @@map("oauth_client")
+}
+
+model OauthResource {
+  id                            String    @id
+  identifier                    String    @unique
+  name                          String
+  accessTokenTtl                Int?
+  refreshTokenTtl               Int?
+  signingAlgorithm              String?
+  signingKeyId                  String?
+  allowedScopes                 Json?
+  customClaims                  Json?
+  dpopBoundAccessTokensRequired Boolean?  @default(false)
+  disabled                      Boolean?  @default(false)
+  createdAt                     DateTime?
+  updatedAt                     DateTime?
+  policyVersion                 Int?      @default(1)
+  metadata                      Json?
+
+  clients OauthClientResource[]
+
+  @@map("oauth_resource")
+}
+
+model OauthClientResource {
+  id         String    @id
+  clientId   String
+  resourceId String
+  metadata   Json?
+  createdAt  DateTime?
+
+  client   OauthClient   @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  resource OauthResource @relation(fields: [resourceId], references: [identifier], onDelete: Cascade)
+
+  @@unique([clientId, resourceId])
+  @@index([clientId])
+  @@index([resourceId])
+  @@map("oauth_client_resource")
+}
+
+model OauthRefreshToken {
+  id                      String    @id
+  token                   String    @unique
+  clientId                String
+  sessionId               String?
+  userId                  String
+  referenceId             String?
+  authorizationCodeId     String?
+  resources               Json?
+  requestedUserInfoClaims Json?
+  expiresAt               DateTime
+  createdAt               DateTime
+  revoked                 DateTime?
+  rotatedAt               DateTime?
+  rotationReplayResponse  String?
+  rotationReplayExpiresAt DateTime?
+  authTime                DateTime?
+  confirmation            Json?
+  scopes                  Json?
+
+  client       OauthClient        @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  session      Session?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessTokens OauthAccessToken[]
+
+  @@index([clientId])
+  @@index([sessionId])
+  @@index([userId])
+  @@index([authorizationCodeId])
+  @@map("oauth_refresh_token")
 }
 
 model OauthAccessToken {
-  id                    String   @id
-  accessToken           String   @unique
-  refreshToken          String   @unique
-  accessTokenExpiresAt  DateTime
-  refreshTokenExpiresAt DateTime
-  clientId              String
-  userId                String?
-  scopes                String
-  createdAt             DateTime
-  updatedAt             DateTime
+  id                      String    @id
+  token                   String    @unique
+  clientId                String
+  sessionId               String?
+  userId                  String?
+  referenceId             String?
+  authorizationCodeId     String?
+  resources               Json?
+  requestedUserInfoClaims Json?
+  refreshId               String?
+  expiresAt               DateTime
+  createdAt               DateTime
+  revoked                 DateTime?
+  confirmation            Json?
+  scopes                  Json?
 
-  application OauthApplication @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
-  user        User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client       OauthClient        @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  session      Session?           @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  user         User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken OauthRefreshToken? @relation(fields: [refreshId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
+  @@index([sessionId])
   @@index([userId])
+  @@index([authorizationCodeId])
+  @@index([refreshId])
   @@map("oauth_access_token")
 }
 
 model OauthConsent {
-  id           String   @id
-  clientId     String
-  userId       String
-  scopes       String
-  createdAt    DateTime
-  updatedAt    DateTime
-  consentGiven Boolean
+  id                      String   @id
+  clientId                String
+  userId                  String?
+  referenceId             String?
+  resources               Json?
+  requestedUserInfoClaims Json?
+  scopes                  Json?
+  createdAt               DateTime
+  updatedAt               DateTime
 
-  application OauthApplication @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  client OauthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  user   User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
   @@index([userId])
   @@map("oauth_consent")
+}
+
+/// Replay guard for private_key_jwt client assertions.
+model OauthClientAssertion {
+  id        String   @id
+  expiresAt DateTime
+
+  @@map("oauth_client_assertion")
 }
 
 /// Which workspace an OAuth client acts in for a given user. Chosen on the consent screen.
@@ -346,7 +475,8 @@ model McpGrant {
 /// yet confirmed. Promoted to an McpGrant only when /oauth2/consent succeeds,
 /// so abandoning the consent page leaves an existing connection untouched.
 model McpPendingGrant {
-  consentCode    String   @id
+  /// The `sig` of the signed authorization request the consent screen showed.
+  requestId      String
   userId         String
   clientId       String
   organizationId String
@@ -356,6 +486,7 @@ model McpPendingGrant {
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  @@id([requestId, userId])
   @@index([userId])
   @@index([organizationId])
   @@index([expiresAt])
@@ -378,17 +509,20 @@ model Project {
 
   hourlyRateCents Int?
 
-  files       File[]
-  clients     ProjectClient[]
-  updates     ProjectUpdate[]
-  tasks       Task[]
-  invoices    Invoice[]
-  notes       ProjectNote[]
-  documents   Document[]
-  activities  ActivityLog[]
-  labels      ProjectLabel[]
-  timeEntries TimeEntry[]
-  contacts    ProjectContact[]
+  files         File[]
+  clients       ProjectClient[]
+  updates       ProjectUpdate[]
+  tasks         Task[]
+  invoices      Invoice[]
+  notes         ProjectNote[]
+  documents     Document[]
+  activities    ActivityLog[]
+  labels        ProjectLabel[]
+  timeEntries   TimeEntry[]
+  contacts      ProjectContact[]
+  // Set while the project is a potential contract (unsigned work), and kept after it's won.
+  pursuit       ProjectPursuit?
+  pendingAccess PendingProjectAccess[]
 
   @@index([organizationId])
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "project_name_trgm_idx")
@@ -429,6 +563,8 @@ model File {
   organizationId String
   uploadedById   String
   createdAt      DateTime @default(now())
+  // Made before a potential contract was won: hidden from clients until shared.
+  internal       Boolean  @default(false)
   updatedAt      DateTime @default(now()) @updatedAt
 
   project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -455,13 +591,15 @@ model ProjectUpdate {
   organizationId     String
   authorId           String
   createdAt          DateTime @default(now())
+  // Made before a potential contract was won: hidden from clients until shared.
+  internal           Boolean  @default(false)
   updatedAt          DateTime @default(now()) @updatedAt
   // Per-URL display preferences for link previews rendered inside this
   // update's content. Shape: { [url: string]: { size?: "compact" | "full", hidden?: boolean } }
   previewPrefs       Json?    @map("preview_prefs")
 
-  project  Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  file     File?            @relation(fields: [fileId], references: [id])
+  project  Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  file     File?     @relation(fields: [fileId], references: [id])
   comments Comment[]
 
   @@index([projectId])
@@ -485,6 +623,8 @@ model Task {
   projectId      String
   organizationId String
   createdAt      DateTime  @default(now())
+  // Made before a potential contract was won: hidden from clients until shared.
+  internal       Boolean   @default(false)
   updatedAt      DateTime  @updatedAt
 
   project     Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -541,6 +681,8 @@ model Comment {
   organizationId String
   updateId       String?
   taskId         String?
+  /// Written before a potential contract was won; staff only, even if its update or task is shared.
+  internal       Boolean  @default(false)
   createdAt      DateTime @default(now())
 
   update ProjectUpdate? @relation(fields: [updateId], references: [id], onDelete: Cascade)
@@ -553,24 +695,24 @@ model Comment {
 }
 
 model Invoice {
-  id             String            @id @default(cuid())
+  id             String    @id @default(cuid())
   invoiceNumber  String
-  status         String            @default("draft")
-  type           String            @default("itemized") // "itemized" | "uploaded"
+  status         String    @default("draft")
+  type           String    @default("itemized") // "itemized" | "uploaded"
   dueDate        DateTime?
   notes          String?
-  amount         Int?              // Total in cents, used for uploaded invoices
+  amount         Int? // Total in cents, used for uploaded invoices
   uploadedFileId String?
   projectId      String?
   organizationId String
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   // Stripe Connect payment tracking
   stripeCheckoutSessionId String?
   stripePaymentIntentId   String?
   paidAt                  DateTime?
-  paidAmount              Int?      // Amount actually paid (cents)
+  paidAmount              Int? // Amount actually paid (cents)
 
   estimateId         String? // the estimate this invoice was converted from
   recurringInvoiceId String? // the schedule that generated it
@@ -595,7 +737,7 @@ model InvoiceLineItem {
   id          String @id @default(cuid())
   description String
   quantity    Int    @default(1)
-  unitPrice   Int   // cents (1500 = $15.00)
+  unitPrice   Int // cents (1500 = $15.00)
   taxRateBps  Int    @default(0) // basis points (825 = 8.25%)
   invoiceId   String
 
@@ -651,53 +793,53 @@ model Branding {
 }
 
 model SystemSettings {
-  id             String   @id @default(cuid())
-  organizationId String   @unique
+  id             String       @id @default(cuid())
+  organizationId String       @unique
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   // Email settings
-  emailProvider  String?  // "resend" | "smtp" | null (disabled)
-  emailFrom      String?  // sender address
-  resendApiKey   String?  // encrypted
-  smtpHost       String?
-  smtpPort       Int?
-  smtpUser       String?
-  smtpPass       String?  // encrypted
-  smtpSecure     Boolean  @default(true) // legacy "Use TLS/SSL" checkbox, only read while smtpSecurity is null
-  smtpSecurity   String?  // "tls" | "starttls" | "none"
+  emailProvider String? // "resend" | "smtp" | null (disabled)
+  emailFrom     String? // sender address
+  resendApiKey  String? // encrypted
+  smtpHost      String?
+  smtpPort      Int?
+  smtpUser      String?
+  smtpPass      String? // encrypted
+  smtpSecure    Boolean @default(true) // legacy "Use TLS/SSL" checkbox, only read while smtpSecurity is null
+  smtpSecurity  String? // "tls" | "starttls" | "none"
 
   // Payment settings
-  paymentInstructions String?  // Displayed on invoices in the portal
-  paymentMethod       String?  // "bank_transfer", "paypal", "stripe_link", "other"
-  paymentDetails      String?  // Encrypted — bank account, PayPal email, etc.
+  paymentInstructions String? // Displayed on invoices in the portal
+  paymentMethod       String? // "bank_transfer", "paypal", "stripe_link", "other"
+  paymentDetails      String? // Encrypted — bank account, PayPal email, etc.
 
   // Stripe payments (direct keys or Connect)
-  stripeSecretKey        String?   // encrypted — agency's own Stripe secret key (direct mode)
-  stripeWebhookSecret    String?   // encrypted — auto-registered webhook signing secret
-  stripeConnectAccountId String?   // Connected Stripe account ID (Connect mode)
-  stripeConnectEnabled   Boolean   @default(false) // true when payments are configured (either mode)
-  stripeConnectLivemode  Boolean   @default(false)
-  stripePaymentMethods   String[]  @default([])
+  stripeSecretKey        String? // encrypted — agency's own Stripe secret key (direct mode)
+  stripeWebhookSecret    String? // encrypted — auto-registered webhook signing secret
+  stripeConnectAccountId String? // Connected Stripe account ID (Connect mode)
+  stripeConnectEnabled   Boolean  @default(false) // true when payments are configured (either mode)
+  stripeConnectLivemode  Boolean  @default(false)
+  stripePaymentMethods   String[] @default([])
 
   // File settings
-  maxFileSizeMb  Int      @default(50)
+  maxFileSizeMb Int @default(50)
 
   // Push notification settings
-  vapidPublicKey  String?  // encrypted, auto-generated
-  vapidPrivateKey String?  // encrypted, auto-generated
+  vapidPublicKey  String? // encrypted, auto-generated
+  vapidPrivateKey String? // encrypted, auto-generated
 
   // Telemetry
-  telemetryEnabled Boolean?  // null = not yet asked, true = opted in, false = opted out
+  telemetryEnabled Boolean? // null = not yet asked, true = opted in, false = opted out
 
   // Owner dismissed the "running over plain HTTP" dashboard notice
   plainHttpNoticeDismissed Boolean @default(false)
 
   // General
-  setupCompleted Boolean  @default(false)
-  timezone       String?  // IANA name, e.g. "Australia/Sydney"; scheduled emails use it (UTC when unset)
+  setupCompleted Boolean @default(false)
+  timezone       String? // IANA name, e.g. "Australia/Sydney"; scheduled emails use it (UTC when unset)
 
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("system_settings")
 }
@@ -721,7 +863,7 @@ model ProjectStatus {
 
 model Document {
   id                   String    @id @default(cuid())
-  type                 String    // "quote", "contract", "proposal", "nda", "other", "deliverable"
+  type                 String // "quote", "contract", "proposal", "nda", "other", "deliverable"
   title                String
   fileId               String
   projectId            String
@@ -740,15 +882,17 @@ model Document {
   reminderIntervalDays Int       @default(3)
   lastReminderAt       DateTime?
   signingOrderEnabled  Boolean   @default(false)
-  options              String?   // comma-separated choices for client selection
-  requestNote          String?   // agency's message to the client for the current version (deliverables)
+  options              String? // comma-separated choices for client selection
+  requestNote          String? // agency's message to the client for the current version (deliverables)
   currentVersion       Int       @default(1)
   createdAt            DateTime  @default(now())
+  // Made before a potential contract was won: hidden from clients until shared.
+  internal             Boolean   @default(false)
   updatedAt            DateTime  @updatedAt
 
-  file            File                @relation(fields: [fileId], references: [id], onDelete: Cascade)
-  signedFile      File?               @relation("SignedDocumentFile", fields: [signedFileId], references: [id])
-  project         Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  file            File                  @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  signedFile      File?                 @relation("SignedDocumentFile", fields: [signedFileId], references: [id])
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   responses       DocumentResponse[]
   signatureFields SignatureField[]
   auditEvents     DocumentAuditEvent[]
@@ -785,15 +929,15 @@ model DocumentResponse {
   id                String    @id @default(cuid())
   documentId        String
   userId            String
-  action            String    // "accepted", "declined", "acknowledged", "signed"
+  action            String // "accepted", "declined", "acknowledged", "signed"
   reason            String?
   ipAddress         String?
   userAgent         String?
-  signatureImageKey String?   // storage key for raw signature PNG
-  signatureMethod   String?   // "draw" or "type"
+  signatureImageKey String? // storage key for raw signature PNG
+  signatureMethod   String? // "draw" or "type"
   signedAt          DateTime? // explicit signing timestamp
-  fieldId           String?   // which SignatureField was signed
-  textValue         String?   // for text/date field values
+  fieldId           String? // which SignatureField was signed
+  textValue         String? // for text/date field values
   createdAt         DateTime  @default(now())
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -807,11 +951,11 @@ model DocumentResponse {
 model SignatureField {
   id          String  @id @default(cuid())
   documentId  String
-  pageNumber  Int     // 0-indexed page
-  x           Float   // normalized 0-1 (left edge)
-  y           Float   // normalized 0-1 (top edge)
-  width       Float   // normalized 0-1
-  height      Float   // normalized 0-1
+  pageNumber  Int // 0-indexed page
+  x           Float // normalized 0-1 (left edge)
+  y           Float // normalized 0-1 (top edge)
+  width       Float // normalized 0-1
+  height      Float // normalized 0-1
   type        String  @default("signature") // "signature", "date", "initials", "text"
   label       String?
   required    Boolean @default(true)
@@ -828,10 +972,10 @@ model DocumentAuditEvent {
   id         String   @id @default(cuid())
   documentId String
   userId     String?
-  action     String   // "created","sent","viewed","signed","accepted","declined","voided","expired","reminder_sent","downloaded"
+  action     String // "created","sent","viewed","signed","accepted","declined","voided","expired","reminder_sent","downloaded"
   ipAddress  String?
   userAgent  String?
-  metadata   String?  // JSON
+  metadata   String? // JSON
   createdAt  DateTime @default(now())
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
@@ -859,25 +1003,25 @@ model DocumentAccessToken {
 // ─── Billing / Subscription tables ───
 
 model SubscriptionPlan {
-  id             String   @id @default(cuid())
-  name           String
-  slug           String   @unique
-  stripePriceId  String?
-  priceMonthly   Int      @default(0)    // cents
-  priceYearly    Int      @default(0)    // cents
-  priceLifetime  Int      @default(0)    // cents
-  maxProjects    Int      @default(-1)   // -1 = unlimited
-  maxStorageMb   Int      @default(-1)
-  maxMembers     Int      @default(-1)
-  maxClients     Int      @default(-1)
-  maxSeats       Int      @default(-1)   // cap on total subscriptions for this plan
-  isRecurring    Boolean  @default(true)
-  features       String[] @default([])
-  description    String?
-  sortOrder      Int      @default(0)
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  stripePriceId String?
+  priceMonthly  Int      @default(0) // cents
+  priceYearly   Int      @default(0) // cents
+  priceLifetime Int      @default(0) // cents
+  maxProjects   Int      @default(-1) // -1 = unlimited
+  maxStorageMb  Int      @default(-1)
+  maxMembers    Int      @default(-1)
+  maxClients    Int      @default(-1)
+  maxSeats      Int      @default(-1) // cap on total subscriptions for this plan
+  isRecurring   Boolean  @default(true)
+  features      String[] @default([])
+  description   String?
+  sortOrder     Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   subscriptions Subscription[]
 
@@ -885,23 +1029,23 @@ model SubscriptionPlan {
 }
 
 model Subscription {
-  id                     String    @id @default(cuid())
-  organizationId         String    @unique
-  planId                 String
-  stripeCustomerId       String?   @unique
-  stripeSubscriptionId   String?
-  stripePaymentIntentId  String?
-  status                 String    @default("active") // active, past_due, canceled, incomplete
-  currentPeriodStart     DateTime?
-  currentPeriodEnd       DateTime?
-  cancelAtPeriodEnd      Boolean   @default(false)
-  trialEndedAt           DateTime?
-  trialReminderSentAt    DateTime?
-  trialEndedEmailSentAt  DateTime?
-  createdAt              DateTime  @default(now())
-  updatedAt              DateTime  @updatedAt
+  id                    String    @id @default(cuid())
+  organizationId        String    @unique
+  planId                String
+  stripeCustomerId      String?   @unique
+  stripeSubscriptionId  String?
+  stripePaymentIntentId String?
+  status                String    @default("active") // active, past_due, canceled, incomplete
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean   @default(false)
+  trialEndedAt          DateTime?
+  trialReminderSentAt   DateTime?
+  trialEndedEmailSentAt DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   plan         SubscriptionPlan @relation(fields: [planId], references: [id])
 
   @@index([planId])
@@ -912,10 +1056,10 @@ model Notification {
   id             String   @id @default(cuid())
   userId         String
   organizationId String
-  type           String   // project_update, comment, task_created, etc.
+  type           String // project_update, comment, task_created, etc.
   title          String
   message        String
-  link           String?  // relative URL e.g. "/portal/projects/abc"
+  link           String? // relative URL e.g. "/portal/projects/abc"
   read           Boolean  @default(false)
   createdAt      DateTime @default(now())
 
@@ -941,7 +1085,7 @@ model PushSubscription {
 
 model ActivityLog {
   id             String   @id @default(cuid())
-  type           String   // "document_response" | "decision_vote" | "decision_closed"
+  type           String // "document_response" | "decision_vote" | "decision_closed"
   action         String
   actorId        String
   targetId       String
@@ -950,6 +1094,8 @@ model ActivityLog {
   projectId      String
   organizationId String
   createdAt      DateTime @default(now())
+  // Made before a potential contract was won: hidden from clients until shared.
+  internal       Boolean  @default(false)
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
@@ -967,7 +1113,7 @@ model Label {
   organizationId String
   createdAt      DateTime @default(now())
 
-  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   projectLabels ProjectLabel[]
   taskLabels    TaskLabel[]
   fileLabels    FileLabel[]
@@ -1062,6 +1208,7 @@ model Company {
   contracts           Contract[]
   kbAudiences         KbAudience[]
   announcementTargets AnnouncementAudience[]
+  pursuits            ProjectPursuit[]
 
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -1184,10 +1331,10 @@ model ContactLabel {
 }
 
 model ProjectContact {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   projectId String
   contactId String
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
   // Set when the client is taken off the project or leaves the workspace. The link stays so
   // invoices paid until then still count toward the contact; later ones don't.
   endedAt   DateTime?
@@ -1241,6 +1388,10 @@ model TimeEntry {
   contractId        String?
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
+  // Partial unique index "time_entry_one_running_per_user" on
+  // ("organizationId", "userId") WHERE "endedAt" IS NULL is applied
+  // out-of-band by packages/database/scripts/migrate-time-entry-running-unique.ts
+  // (Prisma 6 does not yet support `where:` on `@@unique`).
 
   @@index([organizationId, userId, startedAt])
   @@index([projectId, startedAt])
@@ -1250,10 +1401,6 @@ model TimeEntry {
   @@index([ticketId])
   @@index([contractId])
   @@map("time_entry")
-  // Partial unique index "time_entry_one_running_per_user" on
-  // ("organizationId", "userId") WHERE "endedAt" IS NULL is applied
-  // out-of-band by packages/database/scripts/migrate-time-entry-running-unique.ts
-  // (Prisma 6 does not yet support `where:` on `@@unique`).
 }
 
 // ─── Integrations (Slack, Discord, outbound webhooks) ───
@@ -2337,4 +2484,80 @@ model TicketAnnouncement {
   @@unique([ticketId, announcementId])
   @@index([announcementId])
   @@map("ticket_announcement")
+}
+
+// A project that isn't signed yet ("potential contract"). outcome: "open" | "won" | "lost".
+// stage: "found" | "proposal_sent" | "waiting".
+model ProjectPursuit {
+  projectId          String    @id
+  organizationId     String
+  stage              String    @default("found")
+  outcome            String    @default("open")
+  lostReason         String?
+  valueCents         Int?
+  closeDate          DateTime?
+  nextStep           String?
+  nextStepAt         DateTime?
+  isBid              Boolean   @default(false)
+  solicitationNumber String?
+  questionsDueAt     DateTime?
+  sourceUrl          String?
+  companyId          String?
+  wonAt              DateTime?
+  // Cost: typed directly, or worked out from tracked time × laborRateCents plus cost lines.
+  costCents          Int?
+  laborRateCents     Int?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  project   Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  company   Company?              @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  events    ProjectPursuitEvent[]
+  costLines ProjectCostLine[]
+
+  @@index([organizationId, outcome])
+  @@map("project_pursuit")
+}
+
+model ProjectPursuitEvent {
+  id        String   @id @default(cuid())
+  projectId String
+  text      String
+  createdAt DateTime @default(now())
+
+  pursuit ProjectPursuit @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@map("project_pursuit_event")
+}
+
+// A cost on a potential contract (materials, a subcontractor...). Labor from tracked time is separate.
+model ProjectCostLine {
+  id          String   @id @default(cuid())
+  projectId   String
+  label       String   @db.VarChar(100)
+  amountCents Int
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  pursuit ProjectPursuit @relation(fields: [projectId], references: [projectId], onDelete: Cascade)
+
+  @@index([projectId, sortOrder])
+  @@map("project_cost_line")
+}
+
+// Portal access promised when a potential contract was won and its contact invited.
+// Applied when that email accepts an invite to the workspace.
+model PendingProjectAccess {
+  id             String   @id @default(cuid())
+  organizationId String
+  projectId      String
+  email          String
+  createdAt      DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, email])
+  @@index([organizationId, email])
+  @@map("pending_project_access")
 }

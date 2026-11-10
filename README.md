@@ -144,6 +144,7 @@ The unified image (`vibralabs/atrium`) bundles the API, web app, and a Caddy rev
 - [Knowledge Base](docs/knowledge-base.md)
 - [Estimates, Catalog & Recurring Billing](docs/estimates.md)
 - [Assets, Contracts, Announcements & Reports](docs/client-services.md)
+- [Inviting Clients from a CRM (Salesforce)](docs/crm-invites.md)
 
 ## Roadmap
 

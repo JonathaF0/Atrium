@@ -22,6 +22,7 @@ import { SetupModule } from "./setup/setup.module";
 import { BillingModule } from "./billing/billing.module";
 import { TrialModule } from "./trial/trial.module";
 import { DigestModule } from "./digest/digest.module";
+import { DashboardLayoutModule } from "./dashboard-layout/dashboard-layout.module";
 import { AccountModule } from "./account/account.module";
 import { DocumentsModule } from "./documents/documents.module";
 import { ActivityModule } from "./activity/activity.module";
@@ -39,6 +40,7 @@ import { ContactSyncModule } from "./contact-sync/contact-sync.module";
 import { ContactsModule } from "./contacts/contacts.module";
 import { OrganizationModule } from "./organization/organization.module";
 import { ServiceCoreModule } from "./service-core/service-core.module";
+import { ClientInvitesModule } from "./client-invites/client-invites.module";
 import { ReportsModule } from "./reports/reports.module";
 import { AssetsModule } from "./assets/assets.module";
 import { ContractsModule } from "./contracts/contracts.module";
@@ -87,6 +89,7 @@ import { PlanGuard } from "./common/guards/plan.guard";
     ThrottlerModule.forRoot([{ ttl: 60000, limit: parseInt(process.env.THROTTLE_LIMIT || "100", 10) }]),
     PrismaModule,
     ServiceCoreModule,
+    ClientInvitesModule,
     ContactSyncModule,
     ContactsModule,
     AuthModule,
@@ -106,6 +109,7 @@ import { PlanGuard } from "./common/guards/plan.guard";
     BillingModule,
     TrialModule,
     DigestModule,
+    DashboardLayoutModule,
     AccountModule,
     DocumentsModule,
     ActivityModule,

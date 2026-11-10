@@ -105,7 +105,8 @@ and similar) at the same URL with the same header. Nothing leaves your network.
 | --- | --- |
 | `get_workspace` | The workspace and user this connection acts as |
 | `list_projects`, `get_project` | Browse projects |
-| `create_project`, `update_project`, `archive_project` | Manage projects |
+| `create_project`, `update_project`, `archive_project` | Manage projects (`create_project` with `potential: true` makes a potential contract) |
+| `update_potential_contract`, `mark_potential_contract_won`, `mark_potential_contract_lost`, `reopen_potential_contract` | Track work that isn't signed yet: stage, value, dates, win or lose it |
 | `delete_project` | Permanently delete a project (owner only) |
 | `list_project_statuses` | The workspace's status options |
 | `list_clients`, `get_client` | Members of the workspace (team and portal clients); a client's profile (from their contact) and projects |
@@ -118,7 +119,7 @@ and similar) at the same URL with the same header. Nothing leaves your network.
 | `add_ticket_note`, `reply_to_ticket`, `update_ticket` | Add an internal note, reply to the client, or change status, priority or assignee |
 | `search_kb_articles`, `get_kb_article`, `list_kb_collections` | Look up knowledge base articles (staff-only articles included unless asked for client-visible results only) |
 
-23 tools in total. List tools take `page` and `limit` (max 50). `post_update` is
+27 tools in total. List tools take `page` and `limit` (max 50). `post_update` is
 visible to clients and may trigger email notifications.
 
 ## Limits and security
@@ -137,6 +138,6 @@ visible to clients and may trigger email notifications.
 
 ## Troubleshooting
 
-- A harmless Prisma `P2025` ("record to delete does not exist") in the API logs on a
-  successful sign-in token exchange comes from Better Auth's `mcp` plugin, not from
-  Atrium -- it can be ignored.
+- After upgrading to a version built on Better Auth 1.7, AI assistants that were
+  connected by signing in must sign in again: client registrations changed format.
+  Connections made with an API key are unaffected.

@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import { EmailPreferencesService } from "./email-preferences.service";
 
 function build() {
-  const row = { weeklyUpdateReminders: true, mondayDigest: false };
+  const row = { weeklyUpdateReminders: true, mondayDigest: false, helpdeskEmails: true };
   const prisma = {
     member: {
       findUniqueOrThrow: mock(() => Promise.resolve(row)),
@@ -12,18 +12,18 @@ function build() {
   return { service: new EmailPreferencesService(prisma as never), prisma };
 }
 
-const SELECT = { weeklyUpdateReminders: true, mondayDigest: true };
+const SELECT = { weeklyUpdateReminders: true, mondayDigest: true, helpdeskEmails: true };
 
 describe("EmailPreferencesService", () => {
   it("reads both switches for the member", async () => {
     const { service, prisma } = build();
-    expect(await service.get("m1")).toEqual({ weeklyUpdateReminders: true, mondayDigest: false });
+    expect(await service.get("m1")).toEqual({ weeklyUpdateReminders: true, mondayDigest: false, helpdeskEmails: true });
     expect(prisma.member.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: "m1" }, select: SELECT });
   });
 
   it("updates only the switches that were sent", async () => {
     const { service, prisma } = build();
-    expect(await service.update("m1", { mondayDigest: true })).toEqual({ weeklyUpdateReminders: true, mondayDigest: true });
+    expect(await service.update("m1", { mondayDigest: true })).toEqual({ weeklyUpdateReminders: true, mondayDigest: true, helpdeskEmails: true });
     expect(prisma.member.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { mondayDigest: true }, select: SELECT });
   });
 });

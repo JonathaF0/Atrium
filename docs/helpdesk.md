@@ -93,7 +93,21 @@ Set **Inbound address** to the address clients write to. Ticket emails then use 
 
 ## Notifications and integrations
 
-Staff get in-app, push and email notifications for new tickets, client replies and assignments. Requesters get email and in-app notifications for public replies and status changes. Slack, Discord and webhook destinations can subscribe to `ticket.created`, `ticket.replied`, `ticket.status_changed`, `ticket.assigned` and `ticket.sla_breached`.
+| What happens | Who hears about it | How |
+|---|---|---|
+| New ticket | The assignee, or every owner and admin | In-app, push, email |
+| Client replies (portal or email) | The assignee, or every owner and admin | In-app, push, email |
+| Client closes their ticket | The assignee, or every owner and admin | In-app, push, email |
+| Client reopens a resolved ticket | The assignee, or every owner and admin | In-app, push, email |
+| Client rates a ticket | The assignee, or every owner and admin | In-app and push; also email when the rating is 1 or 2 stars |
+| Ticket assigned to someone else | The new assignee | In-app, push, email |
+| SLA warning | The assignee, or every owner and admin | In-app, push |
+| SLA breach | Assignee, owners, admins and the policy's escalation contact | In-app, push, email |
+| Staff reply, or status changes to waiting on you, resolved, closed or reopened | The requester | Email and in-app |
+
+Staff can turn the helpdesk emails off in **Settings → Account → Email notifications** ("Helpdesk emails"). In-app and push notifications stay on.
+
+Slack, Discord and webhook destinations can subscribe to `ticket.created`, `ticket.replied`, `ticket.status_changed`, `ticket.assigned`, `ticket.sla_breached` and `ticket.rated`.
 
 ## MCP tools
 
