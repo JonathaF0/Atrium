@@ -57,6 +57,7 @@ export interface AnnouncementsSection {
 }
 
 export interface PortalHome {
+  client: { firstName: string | null } | null;
   company: { name: string; companyAdmin: boolean } | null;
   tickets: Section<TicketsSection>;
   invoices: Section<InvoicesSection>;
@@ -107,7 +108,8 @@ export class PortalHomeService {
       this.projectIds(userId, organizationId, privileged),
     ]);
 
-    const [company, tickets, invoices, renewals, updates, announcements] = await Promise.all([
+    const [client, company, tickets, invoices, renewals, updates, announcements] = await Promise.all([
+      this.safe("client", () => this.client(userId, organizationId)),
       this.safe("company", () => this.company(scope)),
       this.safe("tickets", () => this.tickets(scope)),
       this.safe("invoices", () => this.invoices(organizationId, projectIds)),
@@ -117,6 +119,7 @@ export class PortalHomeService {
     ]);
 
     return {
+      client: client ?? null,
       company: company ?? null,
       tickets,
       invoices,
@@ -128,6 +131,16 @@ export class PortalHomeService {
         payInvoiceProjectId: invoices?.latest.find((i) => i.projectId)?.projectId ?? null,
       },
     };
+  }
+
+  /** The first name to greet the client by: their contact in this workspace, else their account name. */
+  private async client(userId: string, organizationId: string): Promise<{ firstName: string | null }> {
+    const [contact, user] = await Promise.all([
+      this.prisma.contact.findFirst({ where: { userId, organizationId }, select: { firstName: true } }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
+    ]);
+    const fromAccount: string | undefined = user?.name?.trim().split(/\s+/)[0];
+    return { firstName: contact?.firstName?.trim() || fromAccount || null };
   }
 
   private async company(scope: ClientScope): Promise<{ name: string; companyAdmin: boolean } | null> {

@@ -83,7 +83,8 @@ test.describe("Portal home", () => {
   test("widgets render with the client's own data", async () => {
     const client = portal.client;
     await client.goto(`${WEB}/portal`);
-    await expect(client.getByRole("heading", { name: /welcome back/i })).toBeVisible({ timeout: 15_000 });
+    // Greeted by first name (the helper signs clients up as "Test Client VAC").
+    await expect(client.getByRole("heading", { name: "Welcome back, Test" })).toBeVisible({ timeout: 15_000 });
 
     const invoices = client.getByTestId("home-invoices");
     await expect(invoices).toContainText(sentA, { timeout: 15_000 });
