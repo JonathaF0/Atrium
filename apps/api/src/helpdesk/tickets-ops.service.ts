@@ -7,9 +7,13 @@ import { TimeEntriesService } from "../time-entries/time-entries.service";
 import { AuditService, ServiceSettingsService, auditContext, formatReference } from "../service-core";
 import type { AuditRequestContext } from "../service-core";
 import { TicketsService, type TicketActor } from "./tickets.service";
-import type { BulkTicketsDto, ConvertToProjectDto, ConvertToTaskDto, SplitTicketDto, TicketTimeDto } from "./helpdesk.dto";
+import type { BulkTicketsDto, ConvertToProjectDto, ConvertToTaskDto, SplitTicketDto, TicketTimeDto, TicketTimerDto } from "./helpdesk.dto";
 
 export const SUPPORT_PROJECT_PREFIX = "Support";
+
+export function ticketTimeDescription(ticket: Pick<Ticket, "number" | "subject">): string {
+  return `Ticket #${ticket.number}: ${ticket.subject}`.slice(0, 1000);
+}
 
 export function supportProjectName(companyName: string | null): string {
   return companyName ? `${SUPPORT_PROJECT_PREFIX} — ${companyName}`.slice(0, 200) : SUPPORT_PROJECT_PREFIX;
@@ -215,31 +219,89 @@ export class TicketsOpsService {
     const end: Date = dto.endedAt ? new Date(dto.endedAt) : new Date();
     if (Number.isNaN(end.getTime())) throw new BadRequestException("Invalid endedAt");
     const start = new Date(end.getTime() - dto.minutes * 60_000);
-    const coverage = dto.billable === undefined ? await this.contracts.coverageFor(orgId, ticket.companyId) : null;
-    const billable: boolean = dto.billable ?? coverage?.defaultBillable ?? true;
-    const contractId: string | null = billable ? null : (coverage?.defaultContractId ?? null);
+    const terms = await this.billingTerms(ticket, orgId, dto.billable);
     const entry = await this.timeEntries.create(userId, orgId, {
       projectId,
-      description: dto.description?.trim() || `Ticket #${ticket.number}: ${ticket.subject}`.slice(0, 1000),
+      description: dto.description?.trim() || ticketTimeDescription(ticket),
       startedAt: start.toISOString(),
       endedAt: end.toISOString(),
-      billable,
+      billable: terms.billable,
     });
+    const updated = await this.tagEntry(entry.id, ticket, terms);
+    await this.prisma.ticketEvent.create({
+      data: { ticketId: id, actorId: userId, type: "time_logged", toValue: `${dto.minutes} min`, detail: terms.label },
+    });
+    return updated;
+  }
+
+  /**
+   * Starts the staff member's timer on this ticket. Like the project timer, a
+   * person has one running timer at a time: starting here stops any other.
+   */
+  async startTimer(id: string, orgId: string, userId: string, dto: TicketTimerDto) {
+    const ticket: Ticket = await this.tickets.getOrThrow(id, orgId);
+    const projectId: string = ticket.projectId ?? (await this.supportProject(orgId, ticket.companyId));
+    const terms = await this.billingTerms(ticket, orgId, dto.billable);
+    const entry = await this.timeEntries.start(userId, orgId, {
+      projectId,
+      description: dto.description?.trim() || ticketTimeDescription(ticket),
+    });
+    return this.tagEntry(entry.id, ticket, terms, !terms.billable);
+  }
+
+  /** Stops the running timer if it belongs to this ticket, and logs the time on it. */
+  async stopTimer(id: string, orgId: string, userId: string) {
+    const ticket: Ticket = await this.tickets.getOrThrow(id, orgId);
+    const running = await this.prisma.timeEntry.findFirst({
+      where: { userId, organizationId: orgId, endedAt: null },
+      select: { ticketId: true, billable: true, contractId: true },
+    });
+    if (!running || running.ticketId !== ticket.id) throw new NotFoundException("No timer is running on this ticket");
+    const stopped = await this.timeEntries.stop(userId, orgId);
+    const minutes: number = Math.max(1, Math.round((stopped.durationSec ?? 0) / 60));
+    await this.prisma.ticketEvent.create({
+      data: {
+        ticketId: id,
+        actorId: userId,
+        type: "time_logged",
+        toValue: `${minutes} min`,
+        detail: running.contractId ? "covered by contract" : running.billable ? "billable" : "non-billable",
+      },
+    });
+    return stopped;
+  }
+
+  /** Billable or not, and the contract it counts against, for new time on a ticket. */
+  private async billingTerms(
+    ticket: Ticket,
+    orgId: string,
+    billable: boolean | undefined,
+  ): Promise<{ billable: boolean; contractId: string | null; label: string }> {
+    const coverage = billable === undefined ? await this.contracts.coverageFor(orgId, ticket.companyId) : null;
+    const resolved: boolean = billable ?? coverage?.defaultBillable ?? true;
+    const contractId: string | null = resolved ? null : (coverage?.defaultContractId ?? null);
+    return { billable: resolved, contractId, label: contractId ? "covered by contract" : resolved ? "billable" : "non-billable" };
+  }
+
+  /** Links a time entry to the ticket, its contract and the client's support rate. */
+  private async tagEntry(
+    entryId: string,
+    ticket: Ticket,
+    terms: { contractId: string | null },
+    setNonBillable = false,
+  ) {
     const company = ticket.companyId
-      ? await this.prisma.company.findFirst({ where: { id: ticket.companyId, organizationId: orgId }, select: { hourlyRateCents: true } })
+      ? await this.prisma.company.findFirst({ where: { id: ticket.companyId, organizationId: ticket.organizationId }, select: { hourlyRateCents: true } })
       : null;
-    const updated = await this.prisma.timeEntry.update({
-      where: { id: entry.id },
+    return this.prisma.timeEntry.update({
+      where: { id: entryId },
       data: {
         ticketId: ticket.id,
-        ...(contractId ? { contractId } : {}),
+        ...(setNonBillable ? { billable: false } : {}),
+        ...(terms.contractId ? { contractId: terms.contractId } : {}),
         ...(company?.hourlyRateCents != null ? { hourlyRateCents: company.hourlyRateCents } : {}),
       },
     });
-    await this.prisma.ticketEvent.create({
-      data: { ticketId: id, actorId: userId, type: "time_logged", toValue: `${dto.minutes} min`, detail: contractId ? "covered by contract" : billable ? "billable" : "non-billable" },
-    });
-    return updated;
   }
 
   async listTime(id: string, orgId: string) {

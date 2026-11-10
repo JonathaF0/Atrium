@@ -670,6 +670,7 @@ export class TicketsService {
             endedAt: true,
             durationSec: true,
             billable: true,
+            contractId: true,
             invoiceLineItemId: true,
             user: { select: { id: true, name: true } },
           },

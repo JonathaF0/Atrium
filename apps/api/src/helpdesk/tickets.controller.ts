@@ -34,6 +34,7 @@ import {
   StaffTicketQueryDto,
   TicketLabelDto,
   TicketTimeDto,
+  TicketTimerDto,
   UpdateTicketDto,
 } from "./helpdesk.dto";
 import { sendAttachment } from "./attachment-response";
@@ -155,6 +156,16 @@ export class TicketsController {
   @Post(":id/time")
   logTime(@Param("id") id: string, @CurrentOrg("id") orgId: string, @CurrentUser("id") userId: string, @Body() dto: TicketTimeDto) {
     return this.ops.logTime(id, orgId, userId, dto);
+  }
+
+  @Post(":id/timer/start")
+  startTimer(@Param("id") id: string, @CurrentOrg("id") orgId: string, @CurrentUser("id") userId: string, @Body() dto: TicketTimerDto) {
+    return this.ops.startTimer(id, orgId, userId, dto);
+  }
+
+  @Post(":id/timer/stop")
+  stopTimer(@Param("id") id: string, @CurrentOrg("id") orgId: string, @CurrentUser("id") userId: string) {
+    return this.ops.stopTimer(id, orgId, userId);
   }
 
   @Post(":id/convert/project")
