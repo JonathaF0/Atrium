@@ -60,7 +60,7 @@ Ticket, knowledge base and client documentation uploads are always checked again
 | Variable | Default | Description |
 |---|---|---|
 | `ESTIMATE_REMINDER_DAYS` | `3` | Days before an estimate expires that the client gets a reminder; `0` turns reminders off |
-| `AI_ASSIST_ENABLED` | -- | Set to `true` to allow AI-drafted estimates. Each workspace must also turn it on in Settings → Estimates. Drafts are suggestions only and are never saved or sent without review |
+| `AI_ASSIST_ENABLED` | -- | Set to `true` to allow AI-drafted estimates and suggested ticket replies. Each workspace must also turn it on in Settings → Estimates & Tax. Drafts are suggestions only and are never saved or sent without review |
 | `AI_PROVIDER` | `anthropic` | `anthropic`, or `openai` for any OpenAI-compatible server (including self-hosted models) |
 | `AI_API_KEY` | -- | Provider API key. Optional for a self-hosted OpenAI-compatible server |
 | `AI_MODEL` | -- | Model name. Required when AI assist is on |

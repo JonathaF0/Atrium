@@ -14,6 +14,7 @@ interface AuditEntry {
   action: string;
   actorId: string | null;
   actorEmail: string | null;
+  actorName: string | null;
   targetType: string;
   targetId: string | null;
   summary: string | null;
@@ -27,17 +28,43 @@ interface Actor {
   email: string | null;
 }
 
-const ACTION_GROUPS = [
-  { value: "", label: "All actions" },
-  { value: "auth.", label: "Sign-ins and account security" },
-  { value: "member.", label: "Members and permissions" },
-  { value: "security.", label: "Workspace security" },
-  { value: "export.", label: "Exports" },
-  { value: "invoice.", label: "Invoices" },
-  { value: "recurring_invoice.", label: "Recurring billing" },
-  { value: "payments.", label: "Payments" },
-  { value: "billing.", label: "Plan and subscription" },
-];
+/** Friendly names for action groups (the part of an action before the first dot). Unknown groups get a readable fallback. */
+const ACTION_GROUP_LABELS: Record<string, string> = {
+  auth: "Sign-ins and account security",
+  member: "Members and permissions",
+  security: "Workspace security",
+  export: "Exports",
+  invoice: "Invoices",
+  recurring_invoice: "Recurring billing",
+  payments: "Payments",
+  billing: "Plan and subscription",
+  ticket: "Tickets",
+  helpdesk: "Helpdesk settings",
+  kb: "Knowledge base",
+  client_doc: "Client documentation",
+  estimate: "Estimates",
+  contract: "Contracts",
+  asset: "Assets",
+  announcement: "Announcements",
+  contact: "Contacts",
+  workspace: "Workspace",
+  report: "Reports",
+};
+
+const TARGET_TYPE_LABELS: Record<string, string> = {
+  sso_provider: "SSO provider",
+  kb_article: "Knowledge base article",
+  kb_collection: "Knowledge base collection",
+  client_doc: "Client document",
+  service_settings: "Service settings",
+  recurring_invoice: "Recurring invoice",
+};
+
+/** "recurring_invoice" -> "Recurring invoice" */
+function readable(value: string): string {
+  const text: string = value.replace(/[_.]+/g, " ").trim();
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 const inputClass = "px-3 py-2 text-sm border border-[var(--border)] rounded-lg bg-[var(--background)]";
 
@@ -62,6 +89,7 @@ export default function AuditLogPage() {
   const [filters, setFilters] = useState<Filters>(EMPTY);
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [actors, setActors] = useState<Actor[]>([]);
+  const [facets, setFacets] = useState<{ actionGroups: string[]; targetTypes: string[] }>({ actionGroups: [], targetTypes: [] });
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
@@ -90,6 +118,9 @@ export default function AuditLogPage() {
 
   useEffect(() => {
     apiFetch<Actor[]>("/audit-log/actors").then(setActors).catch(() => setActors([]));
+    apiFetch<{ actionGroups: string[]; targetTypes: string[] }>("/audit-log/facets")
+      .then(setFacets)
+      .catch(() => setFacets({ actionGroups: [], targetTypes: [] }));
   }, []);
 
   const update = (patch: Partial<Filters>): void => {
@@ -132,8 +163,9 @@ export default function AuditLogPage() {
         <label className="text-xs text-[var(--muted-foreground)] flex flex-col gap-1">
           Action
           <select aria-label="Action" className={inputClass} value={filters.action} onChange={(e) => update({ action: e.target.value })}>
-            {ACTION_GROUPS.map((g) => (
-              <option key={g.value} value={g.value}>{g.label}</option>
+            <option value="">All actions</option>
+            {facets.actionGroups.map((g) => (
+              <option key={g} value={`${g}.`}>{ACTION_GROUP_LABELS[g] ?? readable(g)}</option>
             ))}
           </select>
         </label>
@@ -150,8 +182,8 @@ export default function AuditLogPage() {
           Target type
           <select aria-label="Target type" className={inputClass} value={filters.targetType} onChange={(e) => update({ targetType: e.target.value })}>
             <option value="">Any</option>
-            {["user", "member", "invitation", "invoice", "recurring_invoice", "export", "workspace", "project", "sso_provider"].map((t) => (
-              <option key={t} value={t}>{t.replace(/_/g, " ")}</option>
+            {facets.targetTypes.map((t) => (
+              <option key={t} value={t}>{TARGET_TYPE_LABELS[t] ?? readable(t)}</option>
             ))}
           </select>
         </label>
@@ -195,7 +227,10 @@ export default function AuditLogPage() {
               entries.map((e) => (
                 <tr key={e.id} className="border-t border-[var(--border)] align-top">
                   <td className="px-3 py-2 whitespace-nowrap text-[var(--muted-foreground)]">{new Date(e.createdAt).toLocaleString()}</td>
-                  <td className="px-3 py-2">{e.actorEmail ?? (e.actorId ? e.actorId : "System")}</td>
+                  <td className="px-3 py-2">
+                    {e.actorName ?? e.actorEmail ?? (e.actorId ? "Deleted user" : "System")}
+                    {e.actorName && e.actorEmail && <span className="block text-xs text-[var(--muted-foreground)]">{e.actorEmail}</span>}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{e.action}</td>
                   <td className="px-3 py-2">
                     <span>{e.summary}</span>

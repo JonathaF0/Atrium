@@ -6,6 +6,8 @@ All notable changes to Atrium will be documented in this file.
 
 ### Added
 
+- **Suggested replies** — With AI assist on, staff can draft a ticket reply from the conversation and the help articles the client can read. The draft links the articles it used and is always reviewed before sending; internal notes never leave the workspace and contact details are masked.
+- **Ticket timer** — Start and stop a timer on the ticket page instead of entering minutes afterwards; it follows the client's contract hours and support rate like logged time.
 - **More helpdesk notifications** — Staff are told (in-app, push and email) when a client closes, reopens or rates a ticket, and client replies, assignments and SLA breaches are now emailed too. Poor ratings (1–2 stars) are emailed; others are in-app only. Each staff member can turn helpdesk emails off under Settings → Account → Email notifications. New `ticket.rated` integration event.
 - **Invite clients from your CRM** — `POST /api/clients/invite` with an API key creates or fills in the contact and company and sends the portal invitation; repeated calls don't send a second invite. A guide covers a Salesforce Flow that runs when a lead is converted. See [docs/crm-invites.md](docs/crm-invites.md).
 - **Helpdesk** — Clients open support tickets in the portal (category, impact and urgency, attachments), reply, reopen, close and rate them; company admins see all of their company's tickets. Staff work a queue with views (unassigned, mine, triage, SLA risk), filters and bulk actions, internal notes, canned responses with variables, labels, links, merge and split, time logging into the existing invoicing flow, and conversion to projects and tasks. See [docs/helpdesk.md](docs/helpdesk.md).
@@ -32,6 +34,7 @@ All notable changes to Atrium will be documented in this file.
 
 ### Changed
 
+- Time logged on a ticket from the dashboard now defaults to automatic billing, so it counts against the client's contract hours while they last. Before, the form always marked it billable.
 - `/portal` is now the client dashboard instead of redirecting to projects.
 - `bun run db:push` also creates the knowledge base full-text index.
 

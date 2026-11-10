@@ -1,5 +1,5 @@
 import { describe, expect, it, mock, beforeEach } from "bun:test";
-import { DocumentsService } from "./documents.service";
+import { DocumentsService, previewContentType } from "./documents.service";
 import {
   NotFoundException,
   ForbiddenException,
@@ -16,6 +16,7 @@ import type { BillingService } from "../billing/billing.service";
 import { writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { Readable } from "stream";
 
 /** Stands in for the temp file TempFileInterceptor writes for uploadVersion. */
 const TEMP_PDF = join(tmpdir(), `atrium-documents-spec-${process.pid}.pdf`);
@@ -1347,6 +1348,37 @@ describe("DocumentsService", () => {
 
       expect(result).toEqual({ kind: "link", url: "https://figma.com/file/abc" });
       expect(mockAuditService.log).toHaveBeenCalledWith(DOC_ID, "viewed", { userId: CLIENT_USER });
+    });
+
+    it("serves an uploaded PDF as application/pdf even when storage reports octet-stream", async () => {
+      mockPrisma.document.findFirst.mockReturnValue(
+        Promise.resolve(makeDoc({
+          type: "deliverable",
+          file: { id: FILE_ID, type: "FILE", storageKey: "k/estimate.pdf", mimeType: "application/pdf", filename: "estimate.pdf" },
+        })),
+      );
+      mockPrisma.projectClient.findFirst.mockReturnValue(Promise.resolve({ id: "pc-1" }));
+      (mockStorage as { download: unknown }).download = mock(() =>
+        Promise.resolve({ body: Readable.from([]), contentType: "application/octet-stream" }),
+      );
+
+      const result = await service.getViewStream(DOC_ID, CLIENT_USER, ORG, "member");
+
+      expect(result.kind).toBe("stream");
+      if (result.kind === "stream") expect(result.contentType).toBe("application/pdf");
+    });
+  });
+
+  describe("previewContentType()", () => {
+    it("prefers a previewable stored type over the storage provider's", () => {
+      expect(previewContentType("application/pdf", "application/octet-stream")).toBe("application/pdf");
+      expect(previewContentType("Image/PNG; charset=binary", "application/octet-stream")).toBe("image/png");
+    });
+
+    it("never promotes a type that could run script", () => {
+      expect(previewContentType("text/html", "application/octet-stream")).toBe("application/octet-stream");
+      expect(previewContentType("image/svg+xml", "application/octet-stream")).toBe("application/octet-stream");
+      expect(previewContentType(null, "application/octet-stream")).toBe("application/octet-stream");
     });
   });
 

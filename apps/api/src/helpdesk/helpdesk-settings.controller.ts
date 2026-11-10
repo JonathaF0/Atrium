@@ -5,6 +5,7 @@ import { AuthGuard, CurrentOrg, CurrentUser, Roles, RolesGuard } from "../common
 import { HelpdeskSettingsService } from "./helpdesk-settings.service";
 import { CannedResponsesService } from "./canned-responses.service";
 import { AutomationService } from "./automation.service";
+import { ReplySuggestionService } from "./reply-suggestion.service";
 import {
   AutomationRuleDto,
   BusinessHoursDto,
@@ -32,7 +33,14 @@ export class HelpdeskSettingsController {
     private settings: HelpdeskSettingsService,
     private canned: CannedResponsesService,
     private automation: AutomationService,
+    private suggestions: ReplySuggestionService,
   ) {}
+
+  /** Whether "Suggest reply" can be offered: AI assist configured on the server and on for the workspace. */
+  @Get("ai-status")
+  aiStatus(@CurrentOrg("id") orgId: string) {
+    return this.suggestions.status(orgId);
+  }
 
   @Get("settings")
   get(@CurrentOrg("id") orgId: string) {

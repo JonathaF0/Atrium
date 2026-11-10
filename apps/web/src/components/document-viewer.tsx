@@ -73,7 +73,8 @@ export function DocumentViewer({
           signal: controller.signal,
         });
         if (!res.ok) throw new Error(`Failed to load document (${res.status})`);
-        const blob = await res.blob();
+        // Type the blob from the file record: a server answering octet-stream would leave the frame blank.
+        const blob = new Blob([await res.arrayBuffer()], { type: mimeType });
         const url = URL.createObjectURL(blob);
         if (!revoked) setBlobUrl(url);
       } catch (err: unknown) {
@@ -94,7 +95,7 @@ export function DocumentViewer({
         return null;
       });
     };
-  }, [viewUrl, canPreview]);
+  }, [viewUrl, canPreview, mimeType]);
 
   useEffect(() => {
     return () => {

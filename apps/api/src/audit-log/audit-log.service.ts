@@ -58,14 +58,33 @@ export class AuditLogService {
       }),
       this.prisma.auditLog.count({ where }),
     ]);
-    return paginatedResponse(data, total, page, limit);
+    return paginatedResponse(await this.withActors(data), total, page, limit);
   }
 
-  exportRows(organizationId: string, filters: AuditFilters) {
-    return this.prisma.auditLog.findMany({
+  async exportRows(organizationId: string, filters: AuditFilters) {
+    const rows = await this.prisma.auditLog.findMany({
       where: buildAuditWhere(organizationId, filters),
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: EXPORT_LIMIT,
+    });
+    return this.withActors(rows);
+  }
+
+  /**
+   * Adds the actor's current name, and their email where the entry didn't
+   * record one (some modules store only the user id).
+   */
+  private async withActors<T extends { actorId: string | null; actorEmail: string | null }>(
+    rows: T[],
+  ): Promise<(T & { actorName: string | null })[]> {
+    const ids: string[] = [...new Set(rows.map((r) => r.actorId).filter((id): id is string => !!id))];
+    const users = ids.length
+      ? await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, email: true } })
+      : [];
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return rows.map((r) => {
+      const user = r.actorId ? byId.get(r.actorId) : undefined;
+      return { ...r, actorName: user?.name ?? null, actorEmail: r.actorEmail ?? user?.email ?? null };
     });
   }
 
@@ -86,6 +105,31 @@ export class AuditLogService {
     });
     const names = new Map(users.map((u) => [u.id, u]));
     return [...byId].map(([id, email]) => ({ id, name: names.get(id)?.name ?? null, email: names.get(id)?.email ?? email }));
+  }
+
+  /**
+   * The action groups (the part before the first dot, e.g. "ticket") and target
+   * types that occur in this workspace's log, for the viewer's filters. Derived
+   * from the data so new modules show up without a hard-coded list.
+   */
+  async facets(organizationId: string): Promise<{ actionGroups: string[]; targetTypes: string[] }> {
+    const [groups, types] = await Promise.all([
+      this.prisma.$queryRaw<{ group: string }[]>`
+        SELECT DISTINCT split_part("action", '.', 1) AS "group"
+        FROM "audit_log" WHERE "organizationId" = ${organizationId}
+        ORDER BY 1 LIMIT 200`,
+      this.prisma.auditLog.findMany({
+        where: { organizationId },
+        distinct: ["targetType"],
+        select: { targetType: true },
+        orderBy: { targetType: "asc" },
+        take: 200,
+      }),
+    ]);
+    return {
+      actionGroups: groups.map((g) => g.group).filter(Boolean),
+      targetTypes: types.map((t) => t.targetType),
+    };
   }
 
   /** Deletes entries older than the retention window. Returns how many were removed. */

@@ -173,7 +173,7 @@ export default function RecurringInvoicesPage() {
             [1, 2, 3].map((i) => <div key={i} className="h-16 bg-[var(--muted)] rounded-lg animate-pulse" />)
           ) : rows.length === 0 ? (
             <div className="border border-dashed border-[var(--border)] rounded-lg p-8 text-center text-sm text-[var(--muted-foreground)]">
-              No recurring invoices yet. Create one to bill a retainer every week, month, quarter or year.
+              {status ? "No schedules with this status." : "No recurring invoices yet. Create one to bill a retainer every week, month, quarter or year."}
             </div>
           ) : (
             rows.map((s) => (

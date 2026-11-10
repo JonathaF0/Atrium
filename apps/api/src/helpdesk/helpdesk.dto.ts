@@ -141,6 +141,11 @@ export class TicketTimeDto {
   @IsOptional() @IsString() @MaxLength(40) endedAt?: string;
 }
 
+export class TicketTimerDto {
+  @IsOptional() @IsString() @MaxLength(1000) description?: string;
+  @IsOptional() @IsBoolean() billable?: boolean;
+}
+
 export class ConvertToProjectDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(200) name?: string;
 }

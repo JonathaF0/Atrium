@@ -75,6 +75,8 @@ What is sent to the provider:
 
 Prompts are not logged. Any OpenAI-compatible endpoint works, including self-hosted models. See [configuration.md](configuration.md#environment-variables) for `AI_PROVIDER`, `AI_MODEL`, `AI_API_KEY` and `AI_BASE_URL`.
 
+The same AI assist settings power **suggested replies** on tickets; see [helpdesk.md](helpdesk.md).
+
 ## Tax on invoices
 
 Invoice line items take an optional tax rate. Tax shows as its own line in totals, the PDF, CSV exports and Stripe Checkout. Invoices without tax look exactly as before.

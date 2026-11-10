@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   Patch,
   Post,
@@ -14,6 +15,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import type { Request, Response } from "express";
 import { AuthGuard, CurrentOrg, CurrentUser, Roles, RolesGuard } from "../common";
 import type { AuthUser } from "../common";
@@ -21,6 +23,8 @@ import { MAX_UPLOAD_BYTES, type TempUploadedFile } from "../files/files.service"
 import { TempFileInterceptor } from "../files/temp-file.interceptor";
 import { TicketsService, type TicketActor } from "./tickets.service";
 import { TicketsOpsService } from "./tickets-ops.service";
+import { ReplySuggestionService } from "./reply-suggestion.service";
+import type { ReplySuggestion } from "./reply-suggestion.service";
 import {
   AcceptTriageDto,
   BulkTicketsDto,
@@ -34,6 +38,7 @@ import {
   StaffTicketQueryDto,
   TicketLabelDto,
   TicketTimeDto,
+  TicketTimerDto,
   UpdateTicketDto,
 } from "./helpdesk.dto";
 import { sendAttachment } from "./attachment-response";
@@ -50,6 +55,7 @@ export class TicketsController {
   constructor(
     private tickets: TicketsService,
     private ops: TicketsOpsService,
+    private suggestions: ReplySuggestionService,
   ) {}
 
   @Get()
@@ -155,6 +161,24 @@ export class TicketsController {
   @Post(":id/time")
   logTime(@Param("id") id: string, @CurrentOrg("id") orgId: string, @CurrentUser("id") userId: string, @Body() dto: TicketTimeDto) {
     return this.ops.logTime(id, orgId, userId, dto);
+  }
+
+  /** A drafted reply for staff to review; never sent or stored. */
+  @Post(":id/suggest-reply")
+  @HttpCode(200)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  suggestReply(@Param("id") id: string, @CurrentOrg("id") orgId: string): Promise<ReplySuggestion> {
+    return this.suggestions.suggest(orgId, id);
+  }
+
+  @Post(":id/timer/start")
+  startTimer(@Param("id") id: string, @CurrentOrg("id") orgId: string, @CurrentUser("id") userId: string, @Body() dto: TicketTimerDto) {
+    return this.ops.startTimer(id, orgId, userId, dto);
+  }
+
+  @Post(":id/timer/stop")
+  stopTimer(@Param("id") id: string, @CurrentOrg("id") orgId: string, @CurrentUser("id") userId: string) {
+    return this.ops.stopTimer(id, orgId, userId);
   }
 
   @Post(":id/convert/project")

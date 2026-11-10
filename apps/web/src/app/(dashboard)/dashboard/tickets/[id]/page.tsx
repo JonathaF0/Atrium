@@ -44,8 +44,10 @@ interface TimeRow {
   id: string;
   description: string | null;
   startedAt: string;
+  endedAt: string | null;
   durationSec: number | null;
   billable: boolean;
+  contractId: string | null;
   invoiceLineItemId: string | null;
   user: { name: string };
 }
@@ -446,6 +448,33 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [fileKey, setFileKey] = useState(0);
+  const confirm = useConfirm();
+  const [aiAvailable, setAiAvailable] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  // The draft came from AI assist and hasn't been touched yet: a reminder to review it.
+  const [aiDraft, setAiDraft] = useState(false);
+
+  useEffect(() => {
+    apiFetch<{ available: boolean }>("/helpdesk/ai-status")
+      .then((r) => setAiAvailable(r.available))
+      .catch(() => setAiAvailable(false));
+  }, []);
+
+  const suggest = async (): Promise<void> => {
+    if (suggesting) return;
+    if (body.trim() && !(await confirm({ title: "Replace your draft?", message: "The suggested reply will replace what you've written so far.", confirmLabel: "Replace" }))) return;
+    setSuggesting(true);
+    try {
+      const res = await apiFetch<{ body: string }>(`/tickets/${ticketId}/suggest-reply`, { method: "POST" });
+      setVisibility("public");
+      setBody(res.body);
+      setAiDraft(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not suggest a reply");
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const insertCanned = async (cannedId: string): Promise<void> => {
     if (!cannedId) return;
@@ -471,6 +500,7 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
         if (failed.length > 0) toast.error(`Not uploaded: ${failed.join("; ")}`);
       }
       setBody("");
+      setAiDraft(false);
       setFiles([]);
       setFileKey((k) => k + 1);
       setStatus("");
@@ -500,6 +530,11 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
           ))}
         </div>
         <ArticlePicker onPick={(md) => setBody((prev) => (prev ? `${prev}\n\n${md}` : md))} />
+        {aiAvailable && visibility === "public" && (
+          <button type="button" onClick={() => void suggest()} disabled={suggesting} className="px-2 py-1 border border-[var(--border)] rounded-lg text-xs disabled:opacity-50">
+            {suggesting ? "Drafting..." : "Suggest reply"}
+          </button>
+        )}
         {canned.length > 0 && (
           <select aria-label="Insert canned response" className="px-2 py-1 border border-[var(--border)] rounded-lg bg-[var(--background)] text-xs" value="" onChange={(e) => void insertCanned(e.target.value)}>
             <option value="">Insert response...</option>
@@ -507,11 +542,19 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
           </select>
         )}
       </div>
+      {aiDraft && (
+        <p className="text-xs text-amber-800 dark:text-amber-300" role="status">
+          Drafted by AI assist from this conversation and your help articles. Check every step and link before sending.
+        </p>
+      )}
       <textarea
         aria-label="Message"
         value={body}
-        onChange={(e) => setBody(e.target.value)}
-        rows={5}
+        onChange={(e) => {
+          setBody(e.target.value);
+          setAiDraft(false);
+        }}
+        rows={aiDraft ? 10 : 5}
         maxLength={50000}
         placeholder={visibility === "public" ? "Reply to the requester (markdown)" : "Note for the team only (markdown)"}
         className="w-full px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm"
@@ -761,14 +804,76 @@ function LinksPanel({ ticket, run }: { ticket: StaffTicket; run: Run }): React.R
   );
 }
 
+/** "auto" lets the server decide: counted against the client's contract while it has hours, otherwise billable. */
+type BillingChoice = "auto" | "billable" | "non_billable";
+
+const billingBody = (choice: BillingChoice): { billable?: boolean } =>
+  choice === "auto" ? {} : { billable: choice === "billable" };
+
+interface RunningTimer {
+  id: string;
+  ticketId: string | null;
+  startedAt: string;
+  project: { name: string };
+}
+
+function elapsed(startedAt: string, now: number): string {
+  const total: number = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
+  const h: number = Math.floor(total / 3600);
+  const m: number = Math.floor((total % 3600) / 60);
+  const s: number = total % 60;
+  return `${h > 0 ? `${h}:` : ""}${String(m).padStart(h > 0 ? 2 : 1, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 function TimePanel({ ticket, run }: { ticket: StaffTicket; run: Run }): React.ReactElement {
+  const confirm = useConfirm();
   const [minutes, setMinutes] = useState("");
   const [description, setDescription] = useState("");
-  const [billable, setBillable] = useState(true);
+  const [billing, setBilling] = useState<BillingChoice>("auto");
+  const [running, setRunning] = useState<RunningTimer | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
+
+  const loadRunning = useCallback(async (): Promise<void> => {
+    setRunning(await apiFetch<RunningTimer | null>("/time-entries/running").catch(() => null));
+  }, []);
+
+  useEffect(() => {
+    void loadRunning();
+  }, [loadRunning, ticket.timeTotalSec]);
+
+  const onThisTicket: boolean = running?.ticketId === ticket.id;
+  useEffect(() => {
+    if (!onThisTicket) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [onThisTicket]);
+
+  const start = async (): Promise<void> => {
+    if (running && !onThisTicket) {
+      const ok = await confirm({
+        title: "Stop running timer?",
+        message: `A timer is running on "${running.project.name}". Starting one here will stop it.`,
+        confirmLabel: "Start here",
+      });
+      if (!ok) return;
+    }
+    setNow(Date.now());
+    await run(
+      () => apiFetch(`/tickets/${ticket.id}/timer/start`, { method: "POST", body: JSON.stringify({ description, ...billingBody(billing) }) }),
+      "Timer started",
+    );
+    await loadRunning();
+  };
+
+  const stop = async (): Promise<void> => {
+    if (await run(() => apiFetch(`/tickets/${ticket.id}/timer/stop`, { method: "POST" }), "Time logged")) setDescription("");
+    await loadRunning();
+  };
+
   const log = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     const ok = await run(
-      () => apiFetch(`/tickets/${ticket.id}/time`, { method: "POST", body: JSON.stringify({ minutes: Number(minutes), description, billable }) }),
+      () => apiFetch(`/tickets/${ticket.id}/time`, { method: "POST", body: JSON.stringify({ minutes: Number(minutes), description, ...billingBody(billing) }) }),
       "Time logged",
     );
     if (ok) {
@@ -776,6 +881,7 @@ function TimePanel({ ticket, run }: { ticket: StaffTicket; run: Run }): React.Re
       setDescription("");
     }
   };
+
   return (
     <section className={`${box} space-y-2`} aria-label="Time">
       <h2 className="font-medium text-sm">Time <span className="font-normal text-xs text-[var(--muted-foreground)]">{formatDuration(ticket.timeTotalSec)}</span></h2>
@@ -783,19 +889,33 @@ function TimePanel({ ticket, run }: { ticket: StaffTicket; run: Run }): React.Re
         {ticket.timeEntries.map((t) => (
           <li key={t.id} className="flex justify-between gap-2">
             <span className="truncate">{t.user.name}: {t.description ?? "—"}</span>
-            <span className="shrink-0">{formatDuration(t.durationSec ?? 0)}{t.billable ? "" : " (nb)"}{t.invoiceLineItemId ? " · invoiced" : ""}</span>
+            <span className="shrink-0">
+              {t.endedAt ? formatDuration(t.durationSec ?? 0) : "running"}
+              {t.contractId ? " (contract)" : t.billable ? "" : " (nb)"}
+              {t.invoiceLineItemId ? " · invoiced" : ""}
+            </span>
           </li>
         ))}
       </ul>
-      <form onSubmit={log} className="space-y-1">
-        <div className="flex gap-1">
-          <input type="number" min={1} max={1440} required value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="Minutes" aria-label="Minutes" className={input} />
-          <label className="flex items-center gap-1 text-xs whitespace-nowrap">
-            <input type="checkbox" checked={billable} onChange={(e) => setBillable(e.target.checked)} /> Billable
-          </label>
+      <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} placeholder="What was done" aria-label="Time description" className={input} />
+      <select aria-label="Billing" value={billing} onChange={(e) => setBilling(e.target.value as BillingChoice)} className={input}>
+        <option value="auto">Billing: automatic (contract hours first)</option>
+        <option value="billable">Billable</option>
+        <option value="non_billable">Non-billable</option>
+      </select>
+      {onThisTicket && running ? (
+        <div className="flex items-center gap-2">
+          <span className="flex-1 font-mono text-sm tabular-nums" data-testid="ticket-timer" aria-live="off">{elapsed(running.startedAt, now)}</span>
+          <button type="button" onClick={() => void stop()} className="px-3 py-1 text-xs rounded-lg bg-red-600 text-white">Stop timer</button>
         </div>
-        <input value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} placeholder="What was done" aria-label="Time description" className={input} />
-        <button type="submit" className="w-full px-2 py-1 text-xs border border-[var(--border)] rounded-lg hover:bg-[var(--muted)]">Log time</button>
+      ) : (
+        <button type="button" onClick={() => void start()} className="w-full px-2 py-1 text-xs border border-[var(--border)] rounded-lg hover:bg-[var(--muted)]">
+          <Clock size={12} className="inline mr-1" aria-hidden />Start timer
+        </button>
+      )}
+      <form onSubmit={log} className="flex gap-1">
+        <input type="number" min={1} max={1440} required value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="Minutes" aria-label="Minutes" className={input} />
+        <button type="submit" className="px-2 py-1 text-xs border border-[var(--border)] rounded-lg hover:bg-[var(--muted)] whitespace-nowrap">Log time</button>
       </form>
     </section>
   );

@@ -6,6 +6,8 @@ import { IntegrationsModule } from "../integrations/integrations.module";
 import { SettingsModule } from "../settings/settings.module";
 import { TimeEntriesModule } from "../time-entries/time-entries.module";
 import { ContractsModule } from "../contracts/contracts.module";
+import { KbModule } from "../kb/kb.module";
+import { ReplySuggestionService } from "./reply-suggestion.service";
 import { TicketsPortalController } from "./tickets-portal.controller";
 import { TicketsController } from "./tickets.controller";
 import { HelpdeskSettingsController } from "./helpdesk-settings.controller";
@@ -22,7 +24,7 @@ import { InboundEmailService } from "./inbound/inbound.service";
 import { AutoCloseTask, ImapPollTask, SlaTask } from "./helpdesk.tasks";
 
 @Module({
-  imports: [ScheduleModule.forRoot(), MailModule, NotificationsModule, IntegrationsModule, SettingsModule, TimeEntriesModule, ContractsModule],
+  imports: [ScheduleModule.forRoot(), MailModule, NotificationsModule, IntegrationsModule, SettingsModule, TimeEntriesModule, ContractsModule, KbModule],
   // The portal controller must come first: `/tickets/mine` would otherwise match `/tickets/:id`.
   controllers: [TicketsPortalController, TicketsController, HelpdeskSettingsController, InboundController],
   providers: [
@@ -35,6 +37,7 @@ import { AutoCloseTask, ImapPollTask, SlaTask } from "./helpdesk.tasks";
     AutomationService,
     SlaService,
     InboundEmailService,
+    ReplySuggestionService,
     SlaTask,
     AutoCloseTask,
     ImapPollTask,

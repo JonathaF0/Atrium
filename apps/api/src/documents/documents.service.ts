@@ -82,6 +82,19 @@ const DOCUMENT_FULL_INCLUDE = {
 } as const;
 
 /** Throws unless a new version may be uploaded to this document. */
+/** Types a browser can preview safely; anything else keeps the storage provider's type. */
+const PREVIEWABLE_TYPES = new Set<string>(["application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+/**
+ * Local storage reports every object as application/octet-stream, which (with nosniff)
+ * stops the browser rendering a PDF preview. Prefer the type recorded at upload when it
+ * is one the browser can show inline without running script.
+ */
+export function previewContentType(stored: string | null | undefined, fromStorage: string): string {
+  const type: string = (stored ?? "").split(";")[0].trim().toLowerCase();
+  return PREVIEWABLE_TYPES.has(type) ? type : fromStorage;
+}
+
 function assertCanTakeVersion<T extends { status: string; requiresSignature: boolean }>(
   doc: T | null,
   mimetype: string,
@@ -640,7 +653,12 @@ export class DocumentsService {
 
     this.auditService.log(id, "downloaded", { userId });
 
-    return { kind: "stream" as const, body, contentType, filename: fileToView.filename };
+    return {
+      kind: "stream" as const,
+      body,
+      contentType: previewContentType(fileToView.mimeType, contentType),
+      filename: fileToView.filename,
+    };
   }
 
   async setSignatureFields(

@@ -24,7 +24,10 @@ function build() {
     ticketLink: { create: mock(async (a: unknown) => a) },
     label: { findFirst: mock(async () => null as unknown) },
     company: { findFirst: mock(async () => null as unknown) },
-    timeEntry: { update: mock(async (a: { data: Record<string, unknown> }) => ({ id: "te1", ...a.data })) },
+    timeEntry: {
+      update: mock(async (a: { data: Record<string, unknown> }) => ({ id: "te1", ...a.data })),
+      findFirst: mock(async () => null as unknown),
+    },
     $transaction: mock(async (ops: unknown) => (Array.isArray(ops) ? Promise.all(ops) : (ops as (tx: unknown) => unknown)(prisma))),
   };
   const tickets = {
@@ -36,7 +39,11 @@ function build() {
     createTicket: mock(async () => t("new", 1005)),
     assertProject: mock(async () => ({ id: "p1", name: "P" })),
   };
-  const timeEntries = { create: mock(async () => ({ id: "te1" })) };
+  const timeEntries = {
+    create: mock(async () => ({ id: "te1" })),
+    start: mock(async () => ({ id: "te-run" })),
+    stop: mock(async () => ({ id: "te-run", durationSec: 1530 })),
+  };
   const audit = { record: mock(async () => undefined) };
   const settings = { get: mock(async () => ({ ticketPrefix: "TKT" })) };
   const contracts = {
@@ -181,6 +188,40 @@ describe("time", () => {
     expect(s.contracts.coverageFor).not.toHaveBeenCalled();
     const data = (s.prisma.timeEntry.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
     expect(data).toEqual({ ticketId: "t1" });
+  });
+
+  it("starts the timer on the ticket's project and tags it with the ticket and contract", async () => {
+    const s = build();
+    s.tickets.getOrThrow.mockResolvedValue(t("t1", 1001, { projectId: "p1", companyId: "co1" }));
+    s.contracts.coverageFor.mockResolvedValue({ defaultBillable: false, defaultContractId: "k1" });
+    await s.service.startTimer("t1", ORG, "staff", {});
+    expect(s.timeEntries.start).toHaveBeenCalledWith("staff", ORG, { projectId: "p1", description: "Ticket #1001: Subject 1001" });
+    const data = (s.prisma.timeEntry.update.mock.calls[0] as unknown as [{ where: { id: string }; data: Record<string, unknown> }])[0];
+    expect(data.where.id).toBe("te-run");
+    expect(data.data).toEqual({ ticketId: "t1", billable: false, contractId: "k1" });
+  });
+
+  it("an explicit billable choice on the timer skips the contract", async () => {
+    const s = build();
+    s.tickets.getOrThrow.mockResolvedValue(t("t1", 1001, { projectId: "p1", companyId: "co1" }));
+    await s.service.startTimer("t1", ORG, "staff", { billable: true });
+    expect(s.contracts.coverageFor).not.toHaveBeenCalled();
+    const data = (s.prisma.timeEntry.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
+    expect(data).toEqual({ ticketId: "t1" });
+  });
+
+  it("stops only a timer that runs on this ticket, and logs the minutes", async () => {
+    const s = build();
+    s.prisma.timeEntry.findFirst.mockResolvedValue({ ticketId: "other", billable: true, contractId: null });
+    await expect(s.service.stopTimer("t1", ORG, "staff")).rejects.toThrow("No timer is running on this ticket");
+    expect(s.timeEntries.stop).not.toHaveBeenCalled();
+
+    s.prisma.timeEntry.findFirst.mockResolvedValue({ ticketId: "t1", billable: false, contractId: "k1" });
+    await s.service.stopTimer("t1", ORG, "staff");
+    expect(s.timeEntries.stop).toHaveBeenCalledWith("staff", ORG);
+    expect(s.prisma.ticketEvent.create).toHaveBeenLastCalledWith({
+      data: { ticketId: "t1", actorId: "staff", type: "time_logged", toValue: "26 min", detail: "covered by contract" },
+    });
   });
 
   it("names the per-company support project", () => {
