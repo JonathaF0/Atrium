@@ -28,8 +28,9 @@ test.describe("Client invites by API key", () => {
     const created = await owner.request.post(`${API}/api-keys`, { data: { name: `CRM ${stamp}` }, headers });
     expect(created.status()).toBe(201);
     key = ((await created.json()) as { key: string }).key;
-    // A bare request context: no cookies, only the key, like a CRM callout.
-    api = await playwright.request.newContext();
+    // A bare request context: no cookies, only the key, like a CRM callout. (Without an explicit
+    // empty storage state it would inherit the suite's signed-in session.)
+    api = await playwright.request.newContext({ storageState: { cookies: [], origins: [] } });
   });
 
   test.afterAll(async () => {
