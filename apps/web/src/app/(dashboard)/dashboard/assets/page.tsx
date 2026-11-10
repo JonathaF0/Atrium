@@ -25,6 +25,9 @@ import {
 } from "./shared";
 import type { Asset, Paginated } from "./shared";
 
+/** Filter dropdowns size to their content; the form input style is full width. */
+const filterClass: string = inputClass.replace("w-full ", "");
+
 const buttonClass =
   "inline-flex items-center gap-1.5 px-3 py-2 border border-[var(--border)] rounded-lg text-sm hover:bg-[var(--muted)] transition-colors";
 
@@ -136,7 +139,7 @@ export default function AssetsPage() {
           maxLength={200}
           className={`${inputClass} max-w-xs`}
         />
-        <select aria-label="Company" value={companyId} onChange={(e) => resetPage(setCompanyId)(e.target.value)} className={`${inputClass} w-auto`}>
+        <select aria-label="Company" value={companyId} onChange={(e) => resetPage(setCompanyId)(e.target.value)} className={filterClass}>
           <option value="">All companies</option>
           {companies.map((c) => (
             <option key={c.id} value={c.id}>
@@ -144,7 +147,7 @@ export default function AssetsPage() {
             </option>
           ))}
         </select>
-        <select aria-label="Type" value={type} onChange={(e) => resetPage(setType)(e.target.value)} className={`${inputClass} w-auto`}>
+        <select aria-label="Type" value={type} onChange={(e) => resetPage(setType)(e.target.value)} className={filterClass}>
           <option value="">All types</option>
           {ASSET_TYPES.map((t) => (
             <option key={t} value={t}>
@@ -152,7 +155,7 @@ export default function AssetsPage() {
             </option>
           ))}
         </select>
-        <select aria-label="Status" value={status} onChange={(e) => resetPage(setStatus)(e.target.value)} className={`${inputClass} w-auto`}>
+        <select aria-label="Status" value={status} onChange={(e) => resetPage(setStatus)(e.target.value)} className={filterClass}>
           <option value="">Any status</option>
           {ASSET_STATUSES.map((s) => (
             <option key={s} value={s}>

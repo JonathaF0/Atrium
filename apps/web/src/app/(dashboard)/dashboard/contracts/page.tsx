@@ -16,6 +16,9 @@ import { UsageBar } from "./usage-bar";
 import { CONTRACT_STATUSES, CONTRACT_STATUS_LABELS, CONTRACT_TYPE_LABELS, formatDay } from "./shared";
 import type { Contract } from "./shared";
 
+/** Filter dropdowns size to their content; the form input style is full width. */
+const filterClass: string = inputClass.replace("w-full ", "");
+
 interface Paginated<T> {
   data: T[];
   meta: { total: number; page: number; limit: number; totalPages: number };
@@ -92,7 +95,7 @@ export default function ContractsPage() {
             setCompanyId(e.target.value);
             setPage(1);
           }}
-          className={`${inputClass} w-auto`}
+          className={filterClass}
         >
           <option value="">All companies</option>
           {companies.map((c) => (
@@ -108,7 +111,7 @@ export default function ContractsPage() {
             setStatus(e.target.value);
             setPage(1);
           }}
-          className={`${inputClass} w-auto`}
+          className={filterClass}
         >
           <option value="">Any status</option>
           {CONTRACT_STATUSES.map((s) => (
@@ -125,7 +128,7 @@ export default function ContractsPage() {
           <ClientItemSkeleton />
         </div>
       ) : contracts.length === 0 ? (
-        <p className="py-12 text-center text-sm text-[var(--muted-foreground)]">No contracts yet.</p>
+        <p className="py-12 text-center text-sm text-[var(--muted-foreground)]">{q || companyId || status ? "No contracts match these filters." : "No contracts yet."}</p>
       ) : (
         <ul className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-xl">
           {contracts.map((c) => (

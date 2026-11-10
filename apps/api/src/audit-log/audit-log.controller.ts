@@ -22,6 +22,11 @@ export class AuditLogController {
     return this.auditLog.actors(orgId);
   }
 
+  @Get("facets")
+  facets(@CurrentOrg("id") orgId: string) {
+    return this.auditLog.facets(orgId);
+  }
+
   @Get("export")
   @Audited({
     action: "export.audit_log",

@@ -153,9 +153,14 @@ export function parseTicketQuery(q: string, prefix: string): { number: number | 
   return { number: m ? Number(m[1]) : null, text };
 }
 
-/** Where-clause for a staff queue view. */
-export function queueViewWhere(view: string, userId: string, now: Date): Prisma.TicketWhereInput {
-  const active: Prisma.TicketWhereInput = { status: { in: ACTIVE_STATUSES } };
+/**
+ * Where-clause for a staff queue view. With `statusChosen`, the status filter
+ * the user picked replaces the view's own status rule (so "Unassigned" +
+ * "Closed" finds closed unassigned tickets instead of nothing); SLA risk keeps
+ * its rule because only active tickets can be at risk.
+ */
+export function queueViewWhere(view: string, userId: string, now: Date, statusChosen = false): Prisma.TicketWhereInput {
+  const active: Prisma.TicketWhereInput = statusChosen && view !== "sla_risk" ? {} : { status: { in: ACTIVE_STATUSES } };
   switch (view) {
     case "unassigned":
       return { ...active, assigneeId: null };
@@ -178,7 +183,7 @@ export function queueViewWhere(view: string, userId: string, now: Date): Prisma.
       };
     }
     case "closed":
-      return { status: { in: ["resolved", "closed"] } };
+      return statusChosen ? {} : { status: { in: ["resolved", "closed"] } };
     case "all":
       return {};
     case "open":
@@ -604,7 +609,7 @@ export class TicketsService {
     const prefix: string = (await this.serviceSettings.get(orgId)).ticketPrefix;
     const view: string = query.view ?? "open";
     const now = new Date();
-    const and: Prisma.TicketWhereInput[] = [queueViewWhere(view, userId, now)];
+    const and: Prisma.TicketWhereInput[] = [queueViewWhere(view, userId, now, !!query.status)];
     if (query.status) and.push({ status: query.status });
     if (query.priority) and.push({ priority: query.priority });
     if (query.categoryId) and.push({ categoryId: query.categoryId });

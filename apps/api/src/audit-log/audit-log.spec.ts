@@ -92,3 +92,33 @@ describe("resolveAuditEntry", () => {
     expect(resolveAuditEntry({ action: "x", targetType: "y" }, { ...req, organization: undefined } as unknown as Request, undefined)).toBeNull();
   });
 });
+
+describe("list", () => {
+  it("names the actor, and fills in an email the entry didn't record", async () => {
+    const rows = [
+      { id: "1", actorId: "u1", actorEmail: null, action: "ticket.merged" },
+      { id: "2", actorId: "u2", actorEmail: "old@example.com", action: "member.role_changed" },
+      { id: "3", actorId: null, actorEmail: null, action: "contract.renewed" },
+    ];
+    const service = new AuditLogService(
+      {
+        auditLog: { findMany: mock(() => Promise.resolve(rows)), count: mock(() => Promise.resolve(3)) },
+        user: {
+          findMany: mock(() =>
+            Promise.resolve([
+              { id: "u1", name: "Alex", email: "alex@example.com" },
+              { id: "u2", name: "Sam", email: "sam@example.com" },
+            ]),
+          ),
+        },
+      } as unknown as PrismaService,
+      { get: () => undefined } as unknown as ConfigService,
+    );
+    const res = (await service.list("org", {})) as { data: { actorName: string | null; actorEmail: string | null }[] };
+    expect(res.data.map((r) => [r.actorName, r.actorEmail])).toEqual([
+      ["Alex", "alex@example.com"],
+      ["Sam", "old@example.com"],
+      [null, null],
+    ]);
+  });
+});

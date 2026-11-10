@@ -222,6 +222,14 @@ describe("queue views", () => {
     expect(queueViewWhere("all", "u1", now)).toEqual({});
   });
 
+  it("a chosen status replaces the view's own status rule, except for SLA risk", () => {
+    expect(queueViewWhere("open", "u1", now, true)).toEqual({});
+    expect(queueViewWhere("closed", "u1", now, true)).toEqual({});
+    expect(queueViewWhere("unassigned", "u1", now, true)).toEqual({ assigneeId: null });
+    expect(queueViewWhere("mine", "u1", now, true)).toEqual({ assigneeId: "u1" });
+    expect(queueViewWhere("sla_risk", "u1", now, true).status).toEqual({ in: ["new", "open", "waiting_client", "waiting_third_party", "on_hold"] });
+  });
+
   it("sla_risk includes breached, warned and soon-due running tickets", () => {
     const w = queueViewWhere("sla_risk", "u1", now);
     expect(w.slaPausedAt).toBeNull();

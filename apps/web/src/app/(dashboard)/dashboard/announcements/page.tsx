@@ -129,7 +129,7 @@ export default function AnnouncementsPage(): React.ReactElement {
       ) : rows.length === 0 ? (
         <div className="text-center py-12">
           <Megaphone size={40} className="mx-auto text-[var(--muted-foreground)] mb-3" />
-          <p className="text-[var(--muted-foreground)]">No announcements yet.</p>
+          <p className="text-[var(--muted-foreground)]">{status || type ? "No announcements match these filters." : "No announcements yet."}</p>
         </div>
       ) : (
         <div className="space-y-2">
