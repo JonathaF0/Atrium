@@ -62,6 +62,8 @@ export class CalendarService {
         ? this.prisma.task.findMany({
             where: {
               organizationId: orgId,
+              // Tasks from before a potential contract was won live in its Internal tab.
+              internal: false,
               ...(query.projectId ? { projectId: query.projectId } : {}),
               ...(activeOnly ? { project: { archivedAt: null } } : {}),
               dueDate: { gte: from, lte: to },
