@@ -15,7 +15,7 @@ test.describe.serial("Email preferences", () => {
   test("both scheduled emails are on by default", async ({ request }) => {
     const res = await request.get(`${API}/email-preferences`);
     expect(res.ok()).toBe(true);
-    expect(await res.json()).toEqual({ weeklyUpdateReminders: true, mondayDigest: true });
+    expect(await res.json()).toEqual({ weeklyUpdateReminders: true, mondayDigest: true, helpdeskEmails: true });
   });
 
   test("rejects a non-boolean value and unknown fields", async ({ request }) => {
@@ -29,7 +29,7 @@ test.describe.serial("Email preferences", () => {
       data: { mondayDigest: false },
       headers: { "x-csrf-token": getCsrfToken() },
     });
-    expect(await res.json()).toEqual({ weeklyUpdateReminders: true, mondayDigest: false });
+    expect(await res.json()).toEqual({ weeklyUpdateReminders: true, mondayDigest: false, helpdeskEmails: true });
   });
 
   test("each email can be turned off from account settings and stays off", async ({ page, request }) => {
@@ -54,6 +54,7 @@ test.describe.serial("Email preferences", () => {
     expect(await (await request.get(`${API}/email-preferences`)).json()).toEqual({
       weeklyUpdateReminders: false,
       mondayDigest: false,
+      helpdeskEmails: true,
     });
   });
 });
