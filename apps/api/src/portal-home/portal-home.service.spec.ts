@@ -26,6 +26,8 @@ function build(s: ClientScope = scope(), overrides: Record<string, unknown> = {}
   const prisma = {
     project: { findMany: mock(async () => [{ id: "p1" }]) },
     company: { findFirst: mock(async () => ({ name: "Sample Company" })) },
+    contact: { findFirst: mock(async () => ({ firstName: " Casey " })) },
+    user: { findUnique: mock(async () => ({ name: "Casey Client" })) },
     ticket: {
       count: mock(async () => 2),
       findMany: mock(async () => [
@@ -136,5 +138,28 @@ describe("PortalHomeService", () => {
     expect(home.invoices).not.toBeNull();
     expect(home.announcements).toEqual({ unread: 1, banner: [] });
     expect(logger.warn).toHaveBeenCalled();
+  });
+  it("greets the client by their contact's first name in this workspace", async () => {
+    const { service, prisma } = build();
+    const home = await service.get("u1", "org1", "member", NOW);
+    expect(home.client).toEqual({ firstName: "Casey" });
+    expect(prisma.contact.findFirst).toHaveBeenCalledWith({
+      where: { userId: "u1", organizationId: "org1" },
+      select: { firstName: true },
+    });
+  });
+
+  it("falls back to the account name, and to no name at all", async () => {
+    const noContact = build(scope(), {
+      contact: { findFirst: mock(async () => null) },
+      user: { findUnique: mock(async () => ({ name: "  Robin   Lee " })) },
+    });
+    expect((await noContact.service.get("u1", "org1", "member", NOW)).client).toEqual({ firstName: "Robin" });
+
+    const nameless = build(scope(), {
+      contact: { findFirst: mock(async () => ({ firstName: "" })) },
+      user: { findUnique: mock(async () => ({ name: "" })) },
+    });
+    expect((await nameless.service.get("u1", "org1", "member", NOW)).client).toEqual({ firstName: null });
   });
 });

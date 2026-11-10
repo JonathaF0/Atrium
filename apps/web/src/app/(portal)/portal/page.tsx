@@ -21,6 +21,7 @@ import { AnnouncementBanner } from "@/components/announcement-banner";
 import type { PortalAnnouncement } from "@/lib/announcements";
 
 interface PortalHome {
+  client: { firstName: string | null } | null;
   company: { name: string; companyAdmin: boolean } | null;
   tickets: {
     openCount: number;
@@ -149,7 +150,9 @@ export default function PortalHomePage(): React.ReactElement {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold">Welcome back</h1>
+        <h1 className="text-2xl font-bold">
+          Welcome back{home.client?.firstName ? `, ${home.client.firstName}` : ""}
+        </h1>
         {home.company && <p className="text-sm text-[var(--muted-foreground)] mt-1">{home.company.name}</p>}
       </div>
 

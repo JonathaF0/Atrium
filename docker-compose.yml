@@ -14,26 +14,57 @@ services:
       retries: 5
 
   atrium:
-    image: vibralabs/atrium:latest
-    # Behind a tunnel or HTTPS proxy on the same machine, use "127.0.0.1:8080:8080"
+    # Built from this repository so the fork's features are included
+    # (the published vibralabs/atrium image doesn't have them).
+    build:
+      context: .
+      dockerfile: docker/unified.Dockerfile
+    # Behind a tunnel or HTTPS proxy on the same machine, use "127.0.0.1:8082:8080"
     # so Atrium isn't reachable directly over plain HTTP (Docker bypasses ufw).
     ports:
-      - "8080:8080"
+      - "8082:8080"
     environment:
       DATABASE_URL: "postgresql://${POSTGRES_USER:-atrium}:${POSTGRES_PASSWORD:-atrium}@postgres:5432/${POSTGRES_DB:-atrium}"
-      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET:-change-me-to-a-random-string-at-least-32-chars}"
-      # The public URL users open Atrium at. Required: sign-in breaks without it
-      # behind any domain or reverse proxy (Coolify, Cloudflare, Nginx, ...).
-      WEB_URL: "${WEB_URL:-http://localhost:8080}"
-      # Include the scheme. An http:// URL turns off Secure cookies so plain-HTTP
-      # sign-in works; the owner sees a notice that logins are unencrypted.
-      # A reverse proxy with HTTPS is strongly recommended.
+      BETTER_AUTH_SECRET: "${BETTER_AUTH_SECRET}"
+      # The public URL users open Atrium at, including the scheme. Required:
+      # sign-in breaks without it behind any domain or reverse proxy.
+      WEB_URL: "${WEB_URL}"
+      STORAGE_PROVIDER: "local"
+      UPLOAD_DIR: "/app/uploads"
     volumes:
       - uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
+      smtp-relay:
+        condition: service_started
+
+  # Sends mail through Microsoft 365 (Graph API). In Atrium's email settings,
+  # use host "smtp-relay", port 25, no authentication. It is only reachable
+  # from the other containers; no port is published.
+  smtp-relay:
+    image: ghcr.io/dmitaj/microsoft-365-smtp-relay:latest
+    restart: unless-stopped
+    environment:
+      Graph_TenantId: "${MICROSOFT_TENANT_ID}"
+      Graph_ClientId: "${MICROSOFT_CLIENT_ID}"
+      Graph_ClientSecret: "${MICROSOFT_CLIENT_SECRET}"
+      # The mailbox mail is sent from, e.g. portal@example.com.
+      SendFrom: "${SMTP_RELAY_SEND_FROM}"
+      Smtp_Host: "0.0.0.0"
+      Smtp_Port: "25"
+      LogLevel: "INFO"
+      LogPath: "/var/log/smtp-relay"
+    volumes:
+      - smtp-relay-logs:/var/log/smtp-relay
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
+  # Fixed names keep the existing database and uploads attached whatever the
+  # project directory is called.
   pgdata:
+    name: atrium-pgdata
   uploads:
+    name: atrium-uploads
+  smtp-relay-logs:
