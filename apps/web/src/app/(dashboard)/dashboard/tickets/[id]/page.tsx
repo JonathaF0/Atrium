@@ -448,6 +448,33 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [fileKey, setFileKey] = useState(0);
+  const confirm = useConfirm();
+  const [aiAvailable, setAiAvailable] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+  // The draft came from AI assist and hasn't been touched yet: a reminder to review it.
+  const [aiDraft, setAiDraft] = useState(false);
+
+  useEffect(() => {
+    apiFetch<{ available: boolean }>("/helpdesk/ai-status")
+      .then((r) => setAiAvailable(r.available))
+      .catch(() => setAiAvailable(false));
+  }, []);
+
+  const suggest = async (): Promise<void> => {
+    if (suggesting) return;
+    if (body.trim() && !(await confirm({ title: "Replace your draft?", message: "The suggested reply will replace what you've written so far.", confirmLabel: "Replace" }))) return;
+    setSuggesting(true);
+    try {
+      const res = await apiFetch<{ body: string }>(`/tickets/${ticketId}/suggest-reply`, { method: "POST" });
+      setVisibility("public");
+      setBody(res.body);
+      setAiDraft(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not suggest a reply");
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const insertCanned = async (cannedId: string): Promise<void> => {
     if (!cannedId) return;
@@ -473,6 +500,7 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
         if (failed.length > 0) toast.error(`Not uploaded: ${failed.join("; ")}`);
       }
       setBody("");
+      setAiDraft(false);
       setFiles([]);
       setFileKey((k) => k + 1);
       setStatus("");
@@ -502,6 +530,11 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
           ))}
         </div>
         <ArticlePicker onPick={(md) => setBody((prev) => (prev ? `${prev}\n\n${md}` : md))} />
+        {aiAvailable && visibility === "public" && (
+          <button type="button" onClick={() => void suggest()} disabled={suggesting} className="px-2 py-1 border border-[var(--border)] rounded-lg text-xs disabled:opacity-50">
+            {suggesting ? "Drafting..." : "Suggest reply"}
+          </button>
+        )}
         {canned.length > 0 && (
           <select aria-label="Insert canned response" className="px-2 py-1 border border-[var(--border)] rounded-lg bg-[var(--background)] text-xs" value="" onChange={(e) => void insertCanned(e.target.value)}>
             <option value="">Insert response...</option>
@@ -509,11 +542,19 @@ function Composer({ ticketId, canned, onSent }: { ticketId: string; canned: Cann
           </select>
         )}
       </div>
+      {aiDraft && (
+        <p className="text-xs text-amber-800 dark:text-amber-300" role="status">
+          Drafted by AI assist from this conversation and your help articles. Check every step and link before sending.
+        </p>
+      )}
       <textarea
         aria-label="Message"
         value={body}
-        onChange={(e) => setBody(e.target.value)}
-        rows={5}
+        onChange={(e) => {
+          setBody(e.target.value);
+          setAiDraft(false);
+        }}
+        rows={aiDraft ? 10 : 5}
         maxLength={50000}
         placeholder={visibility === "public" ? "Reply to the requester (markdown)" : "Note for the team only (markdown)"}
         className="w-full px-3 py-2 border border-[var(--border)] rounded-lg bg-[var(--background)] text-sm"

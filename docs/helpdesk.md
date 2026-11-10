@@ -27,6 +27,7 @@ Clients pick a category and either a priority or an impact and urgency (high imp
 Staff can:
 
 - Work queue views (all, unassigned, mine, triage, SLA risk, open, closed) with filters and bulk actions: assign, change status or priority, add a label, close. Bulk actions take up to 100 tickets.
+- Ask for a **suggested reply** (when AI assist is on: `AI_ASSIST_ENABLED` and Settings → Estimates & Tax → AI assist). The draft is written from the ticket's public messages and the help articles the requester is allowed to read, links the articles it used, and lands in the reply box for you to edit; nothing is sent until you press Send. Internal notes are never sent to the provider, and email addresses and phone numbers are masked first.
 - Reply publicly or add internal notes, with attachments, and insert canned responses. Variables such as `{{requester.firstName}}`, `{{ticket.number}}` and `{{agent.name}}` are filled in.
 - Merge tickets. Each merged ticket is closed and points at the target, and keeps its own messages. The target gets an internal note listing what was merged.
 - Split a reply off into a new linked ticket, and link related tickets.

@@ -12,39 +12,13 @@ import { z } from "zod";
 import { BILLING_TYPES, RECURRING_INTERVALS } from "@atrium/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { ServiceSettingsService, markdownToPlainText } from "../service-core";
+import { completeText, readAiConfig } from "../ai/ai-client";
 
-const DEFAULT_TIMEOUT_MS = 45_000;
+export { extractText, readAiConfig } from "../ai/ai-client";
+export type { AiConfig, AiProvider } from "../ai/ai-client";
+
 const MAX_INPUT_CHARS = 12_000;
 const MAX_CATALOG_ITEMS = 150;
-
-export type AiProvider = "anthropic" | "openai";
-
-export interface AiConfig {
-  provider: AiProvider;
-  apiKey: string;
-  model: string;
-  baseUrl: string | null;
-  timeoutMs: number;
-}
-
-/** The env side of the feature flag. Null when AI assist is off or not fully configured. */
-export function readAiConfig(config: ConfigService): AiConfig | null {
-  if (config.get<string>("AI_ASSIST_ENABLED") !== "true") return null;
-  const provider = (config.get<string>("AI_PROVIDER") ?? "anthropic").trim().toLowerCase();
-  const apiKey = config.get<string>("AI_API_KEY")?.trim() ?? "";
-  const model = config.get<string>("AI_MODEL")?.trim() ?? "";
-  if (provider !== "anthropic" && provider !== "openai") return null;
-  // A self-hosted OpenAI-compatible server may not need a key; a model is always required.
-  if (!model || (provider === "anthropic" && !apiKey)) return null;
-  const timeout = Number.parseInt(config.get<string>("AI_TIMEOUT_MS") ?? "", 10);
-  return {
-    provider,
-    apiKey,
-    model,
-    baseUrl: config.get<string>("AI_BASE_URL")?.trim().replace(/\/+$/, "") || null,
-    timeoutMs: Number.isFinite(timeout) && timeout > 0 ? Math.min(timeout, 120_000) : DEFAULT_TIMEOUT_MS,
-  };
-}
 
 const lineSchema = z.object({
   name: z.string().trim().min(1).max(200),
@@ -250,7 +224,7 @@ export class AiDraftService {
     }));
     const userPrompt = `Catalog (JSON):\n${JSON.stringify(catalogForPrompt)}\n\nClient request:\n"""\n${request}\n"""`;
 
-    const reply = await this.complete(cfg, userPrompt);
+    const reply = await completeText(cfg, { system: SYSTEM_PROMPT, user: userPrompt });
     let parsed: AiDraft;
     try {
       parsed = parseAiDraft(reply);
@@ -266,70 +240,4 @@ export class AiDraftService {
       lineItems: matchCatalog(parsed.lineItems, catalog),
     };
   }
-
-  /** One completion call. Logs status codes only, never prompt or reply text. */
-  private async complete(cfg: AiConfig, userPrompt: string): Promise<string> {
-    const signal = AbortSignal.timeout(cfg.timeoutMs);
-    let res: Response;
-    try {
-      if (cfg.provider === "anthropic") {
-        res = await fetch(`${cfg.baseUrl ?? "https://api.anthropic.com"}/v1/messages`, {
-          method: "POST",
-          signal,
-          headers: {
-            "content-type": "application/json",
-            "x-api-key": cfg.apiKey,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model: cfg.model,
-            max_tokens: 4096,
-            system: SYSTEM_PROMPT,
-            messages: [{ role: "user", content: userPrompt }],
-          }),
-        });
-      } else {
-        const headers: Record<string, string> = { "content-type": "application/json" };
-        if (cfg.apiKey) headers.authorization = `Bearer ${cfg.apiKey}`;
-        res = await fetch(`${cfg.baseUrl ?? "https://api.openai.com/v1"}/chat/completions`, {
-          method: "POST",
-          signal,
-          headers,
-          body: JSON.stringify({
-            model: cfg.model,
-            messages: [
-              { role: "system", content: SYSTEM_PROMPT },
-              { role: "user", content: userPrompt },
-            ],
-          }),
-        });
-      }
-    } catch (err) {
-      const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
-      this.logger.warn(`AI provider request failed (${timedOut ? "timeout" : "network error"})`);
-      throw new BadGatewayException(timedOut ? "The AI provider took too long to answer" : "Could not reach the AI provider");
-    }
-    if (!res.ok) {
-      this.logger.warn(`AI provider responded with HTTP ${res.status}`);
-      throw new BadGatewayException("The AI provider rejected the request");
-    }
-    const body = (await res.json().catch(() => null)) as unknown;
-    const text = extractText(cfg.provider, body);
-    if (!text) throw new BadGatewayException("The AI provider returned an empty answer");
-    return text;
-  }
-}
-
-/** The reply text from an Anthropic Messages or OpenAI chat completion response body. */
-export function extractText(provider: AiProvider, body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
-  if (provider === "anthropic") {
-    const content = (body as { content?: Array<{ type?: string; text?: string }> }).content;
-    if (!Array.isArray(content)) return null;
-    const text = content.filter((c) => c?.type === "text" && typeof c.text === "string").map((c) => c.text).join("");
-    return text || null;
-  }
-  const choices = (body as { choices?: Array<{ message?: { content?: unknown } }> }).choices;
-  const content = Array.isArray(choices) ? choices[0]?.message?.content : null;
-  return typeof content === "string" && content ? content : null;
 }

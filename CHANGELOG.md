@@ -6,6 +6,7 @@ All notable changes to Atrium will be documented in this file.
 
 ### Added
 
+- **Suggested replies** — With AI assist on, staff can draft a ticket reply from the conversation and the help articles the client can read. The draft links the articles it used and is always reviewed before sending; internal notes never leave the workspace and contact details are masked.
 - **Ticket timer** — Start and stop a timer on the ticket page instead of entering minutes afterwards; it follows the client's contract hours and support rate like logged time.
 - **More helpdesk notifications** — Staff are told (in-app, push and email) when a client closes, reopens or rates a ticket, and client replies, assignments and SLA breaches are now emailed too. Poor ratings (1–2 stars) are emailed; others are in-app only. Each staff member can turn helpdesk emails off under Settings → Account → Email notifications. New `ticket.rated` integration event.
 - **Invite clients from your CRM** — `POST /api/clients/invite` with an API key creates or fills in the contact and company and sends the portal invitation; repeated calls don't send a second invite. A guide covers a Salesforce Flow that runs when a lead is converted. See [docs/crm-invites.md](docs/crm-invites.md).
