@@ -538,7 +538,9 @@ export class TicketsService {
     const { ticket } = await this.loadForClient(id, userId, orgId);
     const settings = await this.serviceSettings.get(orgId);
     if (!clientMay("reopen", ticket, settings)) throw new BadRequestException("Only resolved tickets can be reopened");
-    await this.changeTicket(ticket, { status: "open" }, await this.userActor(userId), { notifyRequester: false, via: "client" });
+    const actor = await this.userActor(userId);
+    await this.changeTicket(ticket, { status: "open" }, actor, { notifyRequester: false, via: "client" });
+    this.notifications.clientReopened(ticket.id, actor.name ?? "The client");
     return this.findOneForClient(id, userId, orgId);
   }
 
@@ -546,7 +548,9 @@ export class TicketsService {
     const { ticket } = await this.loadForClient(id, userId, orgId);
     const settings = await this.serviceSettings.get(orgId);
     if (!clientMay("close", ticket, settings)) throw new ForbiddenException("This ticket cannot be closed");
-    await this.changeTicket(ticket, { status: "closed" }, await this.userActor(userId), { notifyRequester: false, via: "client" });
+    const actor = await this.userActor(userId);
+    await this.changeTicket(ticket, { status: "closed" }, actor, { notifyRequester: false, via: "client" });
+    this.notifications.clientClosed(ticket.id, actor.name ?? "The client");
     return this.findOneForClient(id, userId, orgId);
   }
 
@@ -562,6 +566,8 @@ export class TicketsService {
       }),
       this.prisma.ticketEvent.create({ data: { ticketId: id, actorId: userId, type: "csat", toValue: String(dto.rating) } }),
     ]);
+    const actor = await this.userActor(userId);
+    this.notifications.rated(id, actor.name ?? "The client", dto.rating, dto.comment?.trim() || null);
     return this.findOneForClient(id, userId, orgId);
   }
 

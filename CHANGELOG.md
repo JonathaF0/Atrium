@@ -6,6 +6,7 @@ All notable changes to Atrium will be documented in this file.
 
 ### Added
 
+- **More helpdesk notifications** — Staff are told (in-app, push and email) when a client closes, reopens or rates a ticket, and client replies, assignments and SLA breaches are now emailed too. Poor ratings (1–2 stars) are emailed; others are in-app only. Each staff member can turn helpdesk emails off under Settings → Account → Email notifications. New `ticket.rated` integration event.
 - **Invite clients from your CRM** — `POST /api/clients/invite` with an API key creates or fills in the contact and company and sends the portal invitation; repeated calls don't send a second invite. A guide covers a Salesforce Flow that runs when a lead is converted. See [docs/crm-invites.md](docs/crm-invites.md).
 - **Helpdesk** — Clients open support tickets in the portal (category, impact and urgency, attachments), reply, reopen, close and rate them; company admins see all of their company's tickets. Staff work a queue with views (unassigned, mine, triage, SLA risk), filters and bulk actions, internal notes, canned responses with variables, labels, links, merge and split, time logging into the existing invoicing flow, and conversion to projects and tasks. See [docs/helpdesk.md](docs/helpdesk.md).
 - **SLA policies** with business hours and holidays: the clock pauses while waiting on the client, with warnings and breach escalations.

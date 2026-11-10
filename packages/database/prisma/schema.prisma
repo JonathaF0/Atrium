@@ -209,6 +209,8 @@ model Member {
   weeklyReminderSentAt  DateTime?
   mondayDigest          Boolean   @default(true)
   mondayDigestSentAt    DateTime?
+  // Helpdesk emails to this staff member (client replies, closes, ratings, assignments, SLA breaches).
+  helpdeskEmails        Boolean   @default(true)
 
   // Last authenticated request in this workspace, written at most hourly. Lets
   // owners see which clients are actually using the portal.

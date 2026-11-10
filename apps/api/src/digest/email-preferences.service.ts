@@ -4,11 +4,12 @@ import { PrismaService } from "../prisma/prisma.service";
 export interface EmailPreferences {
   weeklyUpdateReminders: boolean;
   mondayDigest: boolean;
+  helpdeskEmails: boolean;
 }
 
-const SELECT = { weeklyUpdateReminders: true, mondayDigest: true } as const;
+const SELECT = { weeklyUpdateReminders: true, mondayDigest: true, helpdeskEmails: true } as const;
 
-/** Per-member switches for the owner/admin emails (Friday update reminder, Monday digest). */
+/** Per-member switches for the owner/admin emails (Friday update reminder, Monday digest, helpdesk). */
 @Injectable()
 export class EmailPreferencesService {
   constructor(private prisma: PrismaService) {}

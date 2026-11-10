@@ -219,6 +219,7 @@ export const INTEGRATION_EVENT_GROUPS = [
       { id: "ticket.status_changed", label: "Ticket status changed" },
       { id: "ticket.assigned", label: "Ticket assigned" },
       { id: "ticket.sla_breached", label: "Ticket SLA breached" },
+      { id: "ticket.rated", label: "Client rated a ticket" },
     ],
   },
   {

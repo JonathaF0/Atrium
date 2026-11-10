@@ -7,6 +7,7 @@ import { useToast } from "@/components/toast";
 interface EmailPreferences {
   weeklyUpdateReminders: boolean;
   mondayDigest: boolean;
+  helpdeskEmails: boolean;
 }
 
 const OPTIONS: { key: keyof EmailPreferences; label: string; hint: string; on: string; off: string }[] = [
@@ -23,6 +24,13 @@ const OPTIONS: { key: keyof EmailPreferences; label: string; hint: string; on: s
     hint: "Lists client projects that went a week without an update, each with a drafted update ready to review.",
     on: "Friday reminders turned on",
     off: "Friday reminders turned off",
+  },
+  {
+    key: "helpdeskEmails",
+    label: "Helpdesk emails",
+    hint: "New tickets, client replies, tickets a client closes, reopens or rates poorly, tickets assigned to you, and SLA breaches. In-app notifications stay on.",
+    on: "Helpdesk emails turned on",
+    off: "Helpdesk emails turned off",
   },
 ];
 

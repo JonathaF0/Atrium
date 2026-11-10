@@ -11,6 +11,10 @@ export class UpdateEmailPreferencesDto {
   @IsOptional()
   @IsBoolean()
   mondayDigest?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  helpdeskEmails?: boolean;
 }
 
 // Owners and admins only: clients don't get these emails.

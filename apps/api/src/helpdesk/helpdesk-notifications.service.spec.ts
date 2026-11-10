@@ -27,7 +27,9 @@ function build(settings: Record<string, unknown> = { ticketPrefix: "TKT", inboun
     serviceSettings: { findUnique: mock(async () => settings) },
     organization: { findUnique: mock(async () => ({ name: "Sample Workspace" })) },
     ticketMessage: { findFirst: mock(async () => ({ body: "first" })), findMany: mock(async () => []), updateMany: mock(async () => ({ count: 1 })) },
-    member: { findMany: mock(async () => [{ userId: "admin1", user: { name: "Admin", email: "admin@example.com" } }]) },
+    member: {
+      findMany: mock(async () => [{ userId: "admin1", helpdeskEmails: true, user: { name: "Admin", email: "admin@example.com" } }]),
+    },
   };
   const mail = { send: mock(async () => ({ sent: true, viaOrgConfig: false })) };
   const inApp = { createMany: mock(async () => undefined) };
@@ -94,6 +96,75 @@ describe("HelpdeskNotificationsService", () => {
     s.service.statusChanged("t1", "open", "resolved", { notifyRequester: true });
     await flush();
     expect(s.mail.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("a client closing or reopening a ticket tells staff in-app and by email", async () => {
+    const s = build();
+    s.service.clientClosed("t1", "Sam");
+    await flush();
+    expect(s.inApp.createMany).toHaveBeenCalledWith([expect.objectContaining({ userId: "admin1", type: "ticket_client_closed", title: "Sam closed TKT-1042" })]);
+    const [to, subject] = s.mail.send.mock.calls[0] as unknown as [string, string];
+    expect(to).toBe("admin@example.com");
+    expect(subject).toBe("[TKT-1042] Closed by the client: Printer offline");
+
+    s.service.clientReopened("t1", "Sam");
+    await flush();
+    expect(s.inApp.createMany).toHaveBeenLastCalledWith([expect.objectContaining({ type: "ticket_client_reopened" })]);
+    expect((s.mail.send.mock.calls[1] as unknown as [string, string])[1]).toBe("[TKT-1042] Reopened: Printer offline");
+  });
+
+  it("client replies are emailed to staff as well as shown in-app", async () => {
+    const s = build();
+    s.service.clientReplied("t1", "Sam", "Still **broken** after restart");
+    await flush();
+    const [to, subject, html] = s.mail.send.mock.calls[0] as unknown as [string, string, string];
+    expect(to).toBe("admin@example.com");
+    expect(subject).toBe("[TKT-1042] Sam replied: Printer offline");
+    expect(html).toContain("Still broken after restart");
+  });
+
+  it("ratings always notify in-app and send an event, but only poor ratings send email", async () => {
+    const s = build();
+    s.service.rated("t1", "Sam", 5, "Great");
+    await flush();
+    expect(s.inApp.createMany).toHaveBeenCalledWith([expect.objectContaining({ type: "ticket_rated", title: "Sam rated TKT-1042 5 stars" })]);
+    expect(s.integrations.dispatch).toHaveBeenCalledWith(expect.objectContaining({ event: "ticket.rated" }));
+    expect(s.mail.send).not.toHaveBeenCalled();
+
+    s.service.rated("t1", "Sam", 1, "Took too long");
+    await flush();
+    const [, subject, html] = s.mail.send.mock.calls[0] as unknown as [string, string, string];
+    expect(subject).toBe("[TKT-1042] Low rating (1 star): Printer offline");
+    expect(html).toContain("Took too long");
+  });
+
+  it("staff who turned helpdesk emails off still get in-app notifications but no email", async () => {
+    const s = build();
+    s.prisma.member.findMany.mockImplementation(async () => [
+      { userId: "admin1", helpdeskEmails: false, user: { name: "Admin", email: "admin@example.com" } },
+    ]);
+    s.service.clientClosed("t1", "Sam");
+    s.service.ticketCreated("t1", { acknowledge: false });
+    await flush();
+    expect(s.inApp.createMany).toHaveBeenCalledTimes(2);
+    expect(s.mail.send).not.toHaveBeenCalled();
+  });
+
+  it("assignment emails the assignee, but not when they assigned themselves", async () => {
+    const s = build();
+    s.service.assigned("t1", "admin1", "someone-else");
+    await flush();
+    expect((s.mail.send.mock.calls[0] as unknown as [string, string])[1]).toBe("[TKT-1042] Assigned to you: Printer offline");
+    s.service.assigned("t1", "admin1", "admin1");
+    await flush();
+    expect(s.mail.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("an SLA breach is emailed to the people it alerts", async () => {
+    const s = build();
+    s.service.slaBreached("t1", "resolution", null);
+    await flush();
+    expect((s.mail.send.mock.calls[0] as unknown as [string, string])[1]).toBe("[TKT-1042] Resolution SLA breached: Printer offline");
   });
 
   it("outbound message ids carry the token for threading", () => {
